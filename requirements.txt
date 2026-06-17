@@ -289,7 +289,7 @@ python-dateutil==2.9.0.post0
 python-discovery==1.4.0
 python-dotenv==1.2.2
 python-json-logger==4.1.0
-python-multipart==0.0.30
+python-multipart==0.0.31
 pytokens==0.4.1
 pytz==2026.2
 pyyaml==6.0.3
