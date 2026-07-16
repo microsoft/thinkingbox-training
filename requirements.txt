@@ -220,7 +220,7 @@ loguru==0.7.3
 markdown-it-py==4.2.0
 markupsafe==3.0.3
 mccabe==0.7.0
-mcp==1.27.2
+mcp==1.28.1
 mdurl==0.1.2
 ml-dtypes==0.5.4
 mock==5.2.0
