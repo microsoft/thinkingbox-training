@@ -1,0 +1,16 @@
+schema_version: 1
+schedule_id: example-one-step
+run:
+  max_steps: 1
+  n_prompts: 1
+  g: 2
+  dp_world: 1
+  algorithm: grpo
+  prompt_repeats_per_task: 1
+coverage:
+  first_cycle_steps: 1
+  exact_train_pool_coverage: true
+steps:
+  - absolute_step: 0
+    prompt_uids:
+      - example_task.py:test_case
