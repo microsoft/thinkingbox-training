@@ -1,0 +1,43 @@
+# Multinode training example. Copy it outside the worktree and adapt it before
+# launch. The trainer overrides the policy
+# deployment with the current adapter name after each successful update.
+mcp_proxy:
+  endpoint_url: "http://127.0.0.1:7111/mcp"
+  timeout: 300.0
+
+orchestrator:
+  type: thinkingbox
+  agent_model:
+    type: aoai
+    deployment: "<policy_deployment>"
+    endpoint_url: "http://127.0.0.1:8000/v1/chat/completions"
+    is_reasoning: true
+    capture_exact_tokens: true
+    temperature: 1.0
+    max_completion_tokens: 4096
+    timeout: 600.0
+
+judge_model:
+  type: aoai
+  credential:
+    type: api-key
+    api_key: "<api_key>"
+  deployment: "<judge_deployment>"
+  endpoint_url: "<judge_chat_completions_url>"
+  temperature: 0.0
+  seed: 731
+  max_completion_tokens: 128
+  timeout: 600.0
+
+judge_type: "<judge_type>"
+
+user_model:
+  type: aoai
+  credential:
+    type: api-key
+    api_key: "<api_key>"
+  deployment: "<user_deployment>"
+  endpoint_url: "<user_chat_completions_url>"
+  temperature: 0.3
+  max_completion_tokens: 4096
+  timeout: 600.0

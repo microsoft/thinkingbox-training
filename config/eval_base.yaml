@@ -1,0 +1,40 @@
+# Safe example values. Replace angle-bracket identifiers for the target runtime.
+mcp_proxy:
+  endpoint_url: "http://127.0.0.1:7111/mcp"
+  timeout: 300.0
+
+orchestrator:
+  type: thinkingbox
+  agent_model:
+    type: aoai
+    deployment: "<policy_deployment>"
+    endpoint_url: "http://127.0.0.1:8000/v1/chat/completions"
+    is_reasoning: true
+    temperature: 1.0
+    max_completion_tokens: 4096
+    timeout: 600.0
+
+judge_model:
+  type: aoai
+  credential:
+    type: az-cli
+  account_name: "<account_token_id>"
+  deployment: "<judge_deployment>"
+  temperature: 0.0
+  seed: 731
+  max_completion_tokens: 128
+  api_version: "<api_version>"
+  timeout: 600.0
+
+judge_type: "<judge_type>"
+
+user_model:
+  type: aoai
+  credential:
+    type: az-cli
+  account_name: "<account_token_id>"
+  deployment: "<user_deployment>"
+  temperature: 0.3
+  max_completion_tokens: 4096
+  api_version: "<api_version>"
+  timeout: 600.0
