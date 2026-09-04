@@ -21,7 +21,7 @@ dependencies = [
     "pyyaml==6.0.3",
     "triton==3.6.0",
     "verl==0.8.0",
-    "vllm==0.24.0",
+    "vllm==0.26.0",
 ]
 
 [project.optional-dependencies]
