@@ -1,0 +1,20 @@
+* text=auto
+
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.example text eol=lf
+
+*.safetensors -text
+*.pt -text
+*.bin -text
+*.zip -text
+*.gz -text
+*.png -text
+*.jpg -text
+*.jpeg -text

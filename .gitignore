@@ -1,0 +1,38 @@
+.venv/
+.env
+.env.*
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+uv.lock
+
+# Training artifacts (never commit) — keep the dir, ignore everything inside
+checkpoints/*
+!checkpoints/.gitkeep
+logs/
+wandb/
+
+# Evaluation results (large jsonl outputs — published to HF Hub instead)
+output/*
+!output/.gitkeep
+evaluations/
+artifacts/
+run_inputs/
+inputs/
+*.jsonl
+
+# Credentials and machine-local configuration
+*.key
+*.pem
+*.p12
+*.pfx
+config/local/
+
+# Stale helper not used in final workflow
+scripts/compare_checkpoints.py
