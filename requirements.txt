@@ -10,4 +10,4 @@ torch==2.11.0
 transformers==5.14.1
 triton==3.6.0
 verl==0.8.0
-vllm==0.24.0
+vllm==0.28.0
