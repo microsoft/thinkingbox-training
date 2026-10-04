@@ -1,0 +1,6 @@
+# Example exclusion boundary for data/prepare_data.py.
+# This sample list does not represent the actual training set used in our paper.
+
+- banking.py:test_get_balance_savings
+- email_system_org.py:test_organizational_structure_contact_lookup
+- mcs_defaults.py:test_mcs_defaults_easy

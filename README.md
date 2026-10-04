@@ -205,6 +205,61 @@ export THINKINGBOX_DATASET_LOADER=public_dataset_loader:load_cases
 Keeping this adapter outside the checkout makes the dataset location and task
 selection runtime inputs rather than repository state.
 
+## Public sample task list
+
+`data/examples/training_tasks.example.yaml` contains 39 runnable selectors from
+five public development files in `thinkingbox-data`:
+
+- `airline_tau_bench.py`
+- `banking.py`
+- `banking_email.py`
+- `email_system_org.py`
+- `mcs_defaults.py`
+
+The list is pinned to public data revision
+`49eacaa530b07177d99acd1d0570ee117d43a20b`. None of its selectors occurs in
+the canonical ThinkingBox-Bench v1.0 507-task list. One additional function in
+`banking.py` is intentionally tagged `skip` upstream and is omitted because
+strict task hydration rejects skipped cases.
+
+**This sample list does not represent the actual training set used in our
+paper.**
+
+Validate all selectors before using the list:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+
+import yaml
+from thinkingbox.common.hydrator import iter_cases_by_names
+
+selectors = yaml.safe_load(
+    Path("data/examples/training_tasks.example.yaml").read_text(encoding="utf-8")
+)
+cases = list(
+    iter_cases_by_names(
+        selectors,
+        base_dir="../thinkingbox-data/dataset",
+        agent="think",
+        strict=True,
+    )
+)
+assert len(cases) == len(selectors) == 39
+print("hydrated 39 public sample tasks")
+PY
+```
+
+Use the sample list with the launcher:
+
+```bash
+export TEST_LIST="$PWD/data/examples/training_tasks.example.yaml"
+```
+
+`data/examples/exclusion_uids.example.yaml` demonstrates the UID-list shape
+accepted by `data/prepare_data.py`. It is an interface example only; real
+training and exclusion lists remain private runtime inputs outside Git.
+
 ## Install and start Typesense and MCP
 
 Install Typesense from the public ThinkingBox repository:

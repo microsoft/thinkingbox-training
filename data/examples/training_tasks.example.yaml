@@ -1,0 +1,45 @@
+# Public examples for validating the training interface.
+# This sample list does not represent the actual training set used in our paper.
+#
+# Source revision:
+# microsoft/thinkingbox-data@49eacaa530b07177d99acd1d0570ee117d43a20b
+
+- airline_tau_bench.py:test_000_book_one_way_economy_flight
+- airline_tau_bench.py:test_001_change_return_flight_later
+- airline_tau_bench.py:test_002_downgrade_business_to_economy
+- airline_tau_bench.py:test_003_fastest_return_same_day_with_bag
+- airline_tau_bench.py:test_004_add_checked_bags_and_change_passenger
+- airline_tau_bench.py:test_006_change_to_cheapest_economy_next_day
+- airline_tau_bench.py:test_007_change_to_cheapest_economy_next_day_with_ewr
+- airline_tau_bench.py:test_008_calculate_certificate_and_gift_card_balances
+- airline_tau_bench.py:test_010_cancel_and_book_new_cheapest_west_coast
+- airline_tau_bench.py:test_011_book_same_flight_for_friend
+- airline_tau_bench.py:test_012_cancel_mco_to_clt_insist_refund
+- airline_tau_bench.py:test_013_change_onestop_to_nonstop_flight
+- airline_tau_bench.py:test_014_upgrade_to_business_add_bags
+- airline_tau_bench.py:test_015_remove_passenger_or_downgrade_all_if_blocked
+- airline_tau_bench.py:test_016_delayed_flight_compensation_complaint
+- airline_tau_bench.py:test_017_push_back_and_business_upgrade_with_budget_limit
+- airline_tau_bench.py:test_018_cancel_basic_economy_persistent_refund
+- airline_tau_bench.py:test_019_change_to_nonstop_with_insurance_and_bag
+- airline_tau_bench.py:test_020_nonstop_change_and_bag_refund
+- airline_tau_bench.py:test_021_basic_economy_change_restriction_sick_cat
+- airline_tau_bench.py:test_022_basic_economy_upgrade_to_change_sick_mother
+- banking.py:test_transfer_and_balance
+- banking.py:test_get_balance_savings
+- banking.py:test_transfer_savings_to_investment
+- banking.py:test_pay_bill_and_transfer
+- banking.py:test_pay_bill_1
+- banking.py:test_check_balance_1
+- banking.py:test_pay_mortgage
+- banking.py:test_pay_bill_2
+- banking.py:test_pay_bill_3
+- banking.py:test_check_balance_2
+- banking.py:test_pay_mortgage_1
+- banking_email.py:test_transfer_and_sendemail
+- email_system_org.py:test_email_manager_of_manager
+- email_system_org.py:test_organizational_structure_contact_lookup
+- email_system_org.py:test_contact_hierarchy_navigation
+- mcs_defaults.py:test_mcs_defaults_difficult
+- mcs_defaults.py:test_mcs_defaults_easy
+- mcs_defaults.py:test_mcs_defaults_medium
