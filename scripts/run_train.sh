@@ -27,9 +27,12 @@ DATASET_LOADER=${THINKINGBOX_DATASET_LOADER:-}
 # is running, and lower GROUP_SIZE/BATCH_SIZE to keep the product divisible by
 # the GPU count.
 GPUS=${GPUS:-0,1,2,3,4,5,6,7}
+NODES=${NODES:-1}
+SEQUENCE_PARALLEL_SIZE=${SEQUENCE_PARALLEL_SIZE:-1}
+ROLLOUT_TP_SIZE=${ROLLOUT_TP_SIZE:-${TP:-2}}
 # GRPO rollouts per prompt. Advantage is reward minus the group mean, so a group
 # whose rollouts all score the same yields zero gradient -- 8 gives a reasonable
-# spread. BATCH_SIZE*GROUP_SIZE must be divisible by the GPU count.
+# spread. BATCH_SIZE*GROUP_SIZE must be divisible by effective data parallelism.
 GROUP_SIZE=${GROUP_SIZE:-8}
 BATCH_SIZE=${BATCH_SIZE:-8}            # distinct prompts per step (8x8 = 64 trajectories)
 # Set generously: verl LEFT-truncates anything longer, silently dropping the
@@ -41,7 +44,6 @@ BATCH_SIZE=${BATCH_SIZE:-8}            # distinct prompts per step (8x8 = 64 tra
 # longer prompts than their user query alone suggests.
 MAX_PROMPT=${MAX_PROMPT:-32768}
 MAX_RESPONSE=${MAX_RESPONSE:-8192}     # whole episode: generations + observations + user turns
-TP=${TP:-2}                            # vLLM tensor parallel; GPUS must divide by it
 GPU_MEM=${GPU_MEM:-0.4}                # vLLM share. Below ~0.25 a 14B model at TP=2
                                        # cannot allocate any KV cache and refuses to start.
 # Offload actor params/optimizer to CPU between phases. On by default because
@@ -54,6 +56,7 @@ OFFLOAD=${OFFLOAD:-true}
 JUDGE_CONFIG=${JUDGE_CONFIG:-}
 
 N_GPUS=$(awk -F, '{print NF}' <<<"$GPUS")
+GPUS_PER_NODE=${GPUS_PER_NODE:-$N_GPUS}
 
 # ------------------------------------------------------------------- preflight
 fail() { echo "error: $*" >&2; exit 1; }
@@ -69,6 +72,16 @@ require_value THINKINGBOX_DATASET_LOADER
 require_value MODEL
 require_value TEST_LIST
 require_value JUDGE_CONFIG
+
+[[ $NODES =~ ^[1-9][0-9]*$ ]] || fail "NODES must be a positive integer"
+[[ $GPUS_PER_NODE =~ ^[1-9][0-9]*$ ]] || \
+  fail "GPUS_PER_NODE must be a positive integer"
+[[ $SEQUENCE_PARALLEL_SIZE =~ ^[1-9][0-9]*$ ]] || \
+  fail "SEQUENCE_PARALLEL_SIZE must be a positive integer"
+[[ $ROLLOUT_TP_SIZE =~ ^[1-9][0-9]*$ ]] || \
+  fail "ROLLOUT_TP_SIZE must be a positive integer"
+
+TOTAL_GPUS=$((NODES * GPUS_PER_NODE))
 
 if [[ $AGENT_LOOP_CONFIG == "$HERE/trainer/agent_loop.yaml" ]]; then
   require_value TBT_USER_API_KEY
@@ -86,10 +99,18 @@ if [[ -n $VAL_LIST && ! -f $VAL_LIST ]]; then
   fail "validation test list not found: $VAL_LIST"
 fi
 
+((N_GPUS == GPUS_PER_NODE)) || \
+  fail "GPUS selects $N_GPUS devices, but GPUS_PER_NODE is $GPUS_PER_NODE"
+((GPUS_PER_NODE % ROLLOUT_TP_SIZE == 0)) || \
+  fail "GPUS_PER_NODE ($GPUS_PER_NODE) must be divisible by ROLLOUT_TP_SIZE ($ROLLOUT_TP_SIZE)"
+((TOTAL_GPUS % SEQUENCE_PARALLEL_SIZE == 0)) || \
+  fail "total GPU count ($TOTAL_GPUS) must be divisible by SEQUENCE_PARALLEL_SIZE ($SEQUENCE_PARALLEL_SIZE)"
+
+DP_SIZE=$((TOTAL_GPUS / SEQUENCE_PARALLEL_SIZE))
+
 # verl asserts this and the message is opaque, so check it here instead.
-(( (BATCH_SIZE * GROUP_SIZE) % N_GPUS == 0 )) || \
-  fail "BATCH_SIZE*GROUP_SIZE ($((BATCH_SIZE*GROUP_SIZE))) must be divisible by the GPU count ($N_GPUS)"
-(( N_GPUS % TP == 0 )) || fail "GPU count ($N_GPUS) must be divisible by TP ($TP)"
+(( (BATCH_SIZE * GROUP_SIZE) % DP_SIZE == 0 )) || \
+  fail "BATCH_SIZE*GROUP_SIZE ($((BATCH_SIZE*GROUP_SIZE))) must be divisible by effective DP size ($DP_SIZE)"
 
 # The proxy must serve the selected dataset's tool servers.
 if ! curl -sf -m 5 "$PROXY_URL/health" >/dev/null; then
@@ -120,7 +141,9 @@ cat <<EOF
 launching training
   model      $MODEL
   test list  $TEST_LIST  (agent=$AGENT)
-  gpus       $GPUS  (n=$N_GPUS, tp=$TP -> $((N_GPUS/TP)) vLLM replicas)
+  gpus       $GPUS
+  topology   nodes=$NODES, gpus/node=$GPUS_PER_NODE, world=$TOTAL_GPUS, sp=$SEQUENCE_PARALLEL_SIZE, dp=$DP_SIZE
+  rollout    tp=$ROLLOUT_TP_SIZE, replicas/node=$((GPUS_PER_NODE/ROLLOUT_TP_SIZE))
   batch      ${BATCH_SIZE} prompts x ${GROUP_SIZE} rollouts = $((BATCH_SIZE*GROUP_SIZE)) trajectories/step
   offload    $OFFLOAD
   proxy      $PROXY_URL
@@ -147,9 +170,11 @@ exec "$VENV/bin/python" -m trainer.train \
   --train-batch-size "$BATCH_SIZE" \
   --max-prompt-length "$MAX_PROMPT" \
   --max-response-length "$MAX_RESPONSE" \
-  --gpus-per-node "$N_GPUS" \
+  --nodes "$NODES" \
+  --gpus-per-node "$GPUS_PER_NODE" \
   -- \
-  actor_rollout_ref.rollout.tensor_model_parallel_size="$TP" \
+  actor_rollout_ref.actor.ulysses_sequence_parallel_size="$SEQUENCE_PARALLEL_SIZE" \
+  actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP_SIZE" \
   actor_rollout_ref.rollout.gpu_memory_utilization="$GPU_MEM" \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
