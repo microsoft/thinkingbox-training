@@ -1,0 +1,25 @@
+- name: thinkingbox
+  _target_: trainer.core.tb_roller.ThinkingBoxAgentLoop
+  mcp_proxy:
+    endpoint_url: ${oc.env:THINKINGBOX_MCP_PROXY_URL}
+    # Session-create latency degrades once the proxy has served ~1.5K sessions;
+    # at training concurrency the 120s default can kill otherwise healthy
+    # rollouts. 600s is headroom, not a tuning knob.
+    timeout: 600.0
+    # A full batch fires every session_create at once; retry creation (only)
+    # through the burst instead of failing the rollout. 15/30/45s backoff.
+    max_retries_session_create: 3
+  # Simulated user. Configure its deployment entirely through the environment.
+  # Remove this block for single-turn rollouts; cases with a user_context then
+  # fail fast instead of running without a user LLM.
+  user_agent:
+    type: aoai
+    credential:
+      type: api-key
+      api_key: ${oc.env:TBT_USER_API_KEY}
+    endpoint_url: ${oc.env:TBT_USER_ENDPOINT_URL}
+    deployment: ${oc.env:TBT_USER_DEPLOYMENT}
+    temperature: 0.3
+    max_completion_tokens: 4096
+    timeout: 600.0
+    retryable_server_errors: [500, 502, 503, 504, "read-error"]

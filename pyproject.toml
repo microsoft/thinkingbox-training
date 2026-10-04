@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thinkingbox-training"
+version = "0.1.0"
+description = "Fine-tuning / RL training scripts built on top of the thinkingbox framework"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Public ThinkingBox framework.
+    "thinkingbox",
+    # Core training stack.
+    "torch>=2.4",
+    "transformers>=4.45,<5",
+    "trl>=0.11",
+    "accelerate>=0.34",
+    "peft>=0.13",
+    "datasets>=3.0",
+    "tokenizers>=0.20",
+    "sentencepiece",
+    "safetensors",
+    "einops",
+    # Experiment tracking / utilities
+    "wandb",
+    "tqdm",
+    "rich",
+    "pyyaml",
+    "verl[vllm]==0.8.0",
+    "torchdata",
+    "TransferQueue==0.1.7",
+]
+
+[project.optional-dependencies]
+# Install separately after the base env is built; these wheels are picky.
+fast = [
+    "flash-attn>=2.6",
+]
+quant = [
+    "bitsandbytes>=0.44",
+]
+dev = [
+    "pytest",
+    "ruff",
+    "black",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["trainer*"]
