@@ -1,0 +1,29 @@
+From b4c6208fc711a2a026e695946bf4f78e237f52b8 Mon Sep 17 00:00:00 2001
+From: ThinkingBox Training Maintainers
+ <thinkingbox-training@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 11:29:10 -0700
+Subject: [PATCH 3/3] Detect actual multimodal inputs for Ulysses
+
+---
+ verl/workers/engine/fsdp/transformer_impl.py | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/verl/workers/engine/fsdp/transformer_impl.py b/verl/workers/engine/fsdp/transformer_impl.py
+index b5c8a7f..7f0f765 100644
+--- a/verl/workers/engine/fsdp/transformer_impl.py
++++ b/verl/workers/engine/fsdp/transformer_impl.py
+@@ -1169,7 +1169,10 @@ class FSDPEngineWithLMHead(FSDPEngine):
+             sp_pad_size = 0
+             is_vlm_model = False
+             if self.use_ulysses_sp:
+-                is_vlm_model = hasattr(getattr(self.module, "module", self.module).config, "vision_config")
++                # A text-only checkpoint may expose a vision_config even when
++                # the current batch contains no multimodal inputs. Select the
++                # execution path from the batch so Ulysses slices text inputs.
++                is_vlm_model = bool(multi_modal_inputs)
+                 if is_vlm_model:
+                     # vlm model's inputs will be sliced after embedding
+                     input_ids_rmpad, position_ids_rmpad, pad_size = ulysses_pad(
+-- 
+2.55.0.vfs.0.10
+

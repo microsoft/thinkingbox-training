@@ -90,6 +90,8 @@ if [[ $AGENT_LOOP_CONFIG == "$HERE/trainer/agent_loop.yaml" ]]; then
 fi
 
 [[ -x $VENV/bin/python ]] || fail "no venv at $VENV -- run: uv venv -p 3.12 .venv && uv pip install -e '.[dev]'"
+"$VENV/bin/python" "$HERE/scripts/verify_verl_install.py" >/dev/null || \
+  fail "Verl installation does not match the required patched v0.9.0 source"
 [[ -d $MODEL ]]           || fail "model not found: $MODEL"
 [[ -f $TEST_LIST ]]       || fail "test list not found: $TEST_LIST"
 [[ -d $DATA/dataset ]]    || fail "dataset checkout not found: $DATA/dataset"

@@ -128,6 +128,9 @@ uv pip install --config-settings editable-mode=compat \
   -e ../thinkingbox-data/servers/tb_business_ops_servers_202606
 uv pip install -e '.[fast,tracking]'
 
+python scripts/prepare_verl.py --dest .deps/verl --install
+python scripts/verify_verl_install.py
+
 uv pip check
 python -c \
   "import torch, transformers, vllm, verl, ray, thinkingbox, trainer.train"
@@ -145,10 +148,24 @@ reference 27B runtime also requires three small compatibility changes:
 3. classify Qwen3.8 as multimodal only when actual multimodal inputs are
    present, so text-only inputs receive Ulysses sequence slicing.
 
-Apply the release's reviewed Verl patches to an exact Verl v0.9.0 source
-checkout before installing it. Do not silently run the 24-GPU reference recipe
-with unpatched Verl. A future upstream release containing equivalent fixes can
-replace the patch step after parity validation.
+The repository carries these changes as three reviewable git-format patches
+under `patches/verl/v0.9.0/`. The preparation script clones exact upstream
+commit `483b8a009ba3a97563edee3a19887e4862b8094a`, verifies source and patch
+hashes, applies the series, and installs the patched checkout:
+
+```bash
+python scripts/prepare_verl.py --dest .deps/verl --install
+python scripts/verify_verl_install.py
+```
+
+The operation is idempotent and fails on modified, partially patched, or
+incompatible source. `run_train.sh` invokes the verifier before launch, so
+vanilla or replaced Verl cannot silently start the reference recipe.
+
+Do not run an automatic package sync after installing the patched checkout;
+it may replace the source installation with the vanilla wheel. A future
+upstream release containing equivalent fixes can replace this patch step after
+parity validation.
 
 ## Public dataset-loader adapter
 
