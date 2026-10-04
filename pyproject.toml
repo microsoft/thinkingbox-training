@@ -10,40 +10,54 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     # Public ThinkingBox framework.
     "thinkingbox",
-    # Core training stack.
-    "torch>=2.4",
-    "transformers>=4.45,<5",
-    "trl>=0.11",
-    "accelerate>=0.34",
-    "peft>=0.13",
+    # Validated Qwen3.8 full-parameter training runtime.
+    "torch==2.13.0",
+    "transformers==5.10.4",
+    "accelerate==1.12.0",
+    "peft==0.19.1",
+    "numpy==2.3.5",
+    "safetensors==0.8.0",
+    "einops==0.8.2",
+    "flash-linear-attention==0.5.2",
+    "fla-core==0.5.2",
+    "triton==3.7.1",
+    "torchdata==0.11.0",
+    "TransferQueue==0.1.10",
+    "ray==2.58.0",
+    "verl==0.9.0",
+    "vllm==0.27.1",
+    # Dataset and tokenizer support used directly by the trainer.
     "datasets>=3.0",
     "tokenizers>=0.20",
     "sentencepiece",
-    "safetensors",
-    "einops",
     # Experiment tracking / utilities
-    "wandb",
     "tqdm",
     "rich",
-    "pyyaml",
-    "verl[vllm]==0.8.0",
-    "torchdata",
-    "TransferQueue==0.1.7",
+    "pyyaml==6.0.3",
 ]
 
 [project.optional-dependencies]
 # Install separately after the base env is built; these wheels are picky.
 fast = [
-    "flash-attn>=2.6",
+    "flash-attn==2.8.3.post1",
+    "causal-conv1d==1.6.2.post1",
 ]
 quant = [
     "bitsandbytes>=0.44",
 ]
+tracking = [
+    "wandb==0.29.0",
+    "tensorboard==2.21.0",
+]
 dev = [
-    "pytest",
+    "pytest==9.1.1",
     "ruff",
     "black",
 ]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch==2.13.0", "packaging", "ninja"]
+causal-conv1d = ["torch==2.13.0", "numpy==2.3.5", "packaging", "wheel"]
 
 [tool.setuptools.packages.find]
 where = ["."]
