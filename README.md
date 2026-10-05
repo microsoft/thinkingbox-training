@@ -592,18 +592,15 @@ With Typesense, MCP, the Q38 vLLM server, and the configured simulated user and
 judge running:
 
 ```bash
-cd ~/q38-workspace/thinkingbox
-source ../thinkingbox-training/.venv/bin/activate
+cd ~/q38-workspace/thinkingbox-training
+source .venv/bin/activate
 
+export THINKINGBOX_ROOT="$HOME/q38-workspace/thinkingbox"
+export THINKINGBOX_DATA="$HOME/q38-workspace/thinkingbox-data"
 export EVAL_CONFIG=/secure/q38/eval.yaml
+export OUTPUT_DIR=/secure/q38/evaluation
 
-tb infer -c "$EVAL_CONFIG" \
-  --dataset ../thinkingbox-data/dataset \
-  --agent think \
-  --test-list ../thinkingbox-data/releases/thinkingbox_bench_v1/testlist_thinkingbox_bench_v1.yaml \
-  --repeat 20 \
-  --batch-size 16 \
-  --output /secure/q38/evaluation/q38_thinkingbox_bench_v1_20x.jsonl
+./scripts/run_eval.sh
 ```
 
 This run expects exactly:
@@ -612,24 +609,29 @@ This run expects exactly:
 507 tasks × 20 repetitions = 10,140 UID/repetition keys
 ```
 
+`run_eval.sh` uses a finite queue-inactivity timeout, verifies exact
+selector/repetition coverage with no duplicates or system-error rows, and only
+then invokes `tb agg`. Outputs and generated run metadata must remain outside
+the Git checkout.
+
 If infrastructure errors occur, rerun only missing or system-error keys:
 
 ```bash
-tb infer -c "$EVAL_CONFIG" \
-  --dataset ../thinkingbox-data/dataset \
-  --agent think \
-  --test-list ../thinkingbox-data/releases/thinkingbox_bench_v1/testlist_thinkingbox_bench_v1.yaml \
-  --repeat 20 \
-  --batch-size 16 \
-  --previous-results-file /secure/q38/evaluation/q38_thinkingbox_bench_v1_20x.jsonl \
-  --output /secure/q38/evaluation/q38_thinkingbox_bench_v1_20x_repaired.jsonl
+PREVIOUS_RESULTS_FILE=/secure/q38/evaluation/q38_thinkingbox_bench_v1_20x.jsonl \
+RUN_NAME=q38_thinkingbox_bench_v1_20x_repaired \
+./scripts/run_eval.sh
 ```
 
-Aggregate the terminal artifact:
+For a bounded smoke test, provide a five-selector YAML list and override the
+expected shape:
 
 ```bash
-tb agg \
-  /secure/q38/evaluation/q38_thinkingbox_bench_v1_20x_repaired.jsonl
+TEST_LIST=/secure/q38/evaluation/smoke5.yaml \
+EXPECTED_TASKS=5 \
+REPEAT=2 \
+BATCH_SIZE=10 \
+RUN_NAME=q38_smoke5_2x \
+./scripts/run_eval.sh
 ```
 
 Do not report a final score until the artifact has 10,140 unique expected
