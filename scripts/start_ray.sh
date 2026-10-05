@@ -11,7 +11,10 @@ HEAD_ADDRESS=${HEAD_ADDRESS:-}
 HEAD_PORT=${HEAD_PORT:-6379}
 NUM_CPUS=${NUM_CPUS:-$(nproc)}
 GPUS_PER_NODE=${GPUS_PER_NODE:-8}
+NODES=${NODES:-1}
 DATASET_LOADER=${THINKINGBOX_DATASET_LOADER:-}
+CHECKPOINT_DIR=${CHECKPOINT_DIR:-$HERE/checkpoints}
+SHARED_CHECKPOINTS_CONFIRMED=${SHARED_CHECKPOINTS_CONFIRMED:-false}
 
 fail() { echo "error: $*" >&2; exit 1; }
 require_value() {
@@ -27,9 +30,21 @@ require_value THINKINGBOX_MCP_PROXY_URL
 require_value TBT_USER_API_KEY
 require_value TBT_USER_ENDPOINT_URL
 require_value TBT_USER_DEPLOYMENT
+JUDGE_CONFIG_ENV=${JUDGE_CONFIG_ENV:-JUDGE_CONFIG}
+[[ $JUDGE_CONFIG_ENV =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || \
+  fail "JUDGE_CONFIG_ENV must name an environment variable"
+require_value "$JUDGE_CONFIG_ENV"
 [[ $ROLE == head ]] || require_value HEAD_ADDRESS
 [[ -x $VENV/bin/python ]] || fail "target environment is missing: $VENV"
 [[ -x $VENV/bin/ray ]] || fail "Ray is not installed in $VENV"
+"$VENV/bin/python" "$HERE/scripts/verify_verl_install.py" >/dev/null || \
+  fail "Verl installation does not match the required patched v0.9.0 source"
+if ((NODES > 1)); then
+  [[ $CHECKPOINT_DIR == /* && -d $CHECKPOINT_DIR ]] || \
+    fail "multi-node CHECKPOINT_DIR must be an existing absolute shared path"
+  [[ $SHARED_CHECKPOINTS_CONFIRMED == true ]] || \
+    fail "set SHARED_CHECKPOINTS_CONFIRMED=true after mounting CHECKPOINT_DIR"
+fi
 
 export PATH="$VENV/bin:$PATH"
 export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"

@@ -310,7 +310,7 @@ The public background script starts the MCP proxy on port 7111, while the
 training launcher's generic default is 7112. Set the launch URL explicitly:
 
 ```bash
-export PROXY_URL=http://127.0.0.1:7111
+export THINKINGBOX_MCP_PROXY_URL=http://127.0.0.1:7111
 ```
 
 ## Configure user simulation and judging
@@ -324,7 +324,8 @@ export TBT_USER_DEPLOYMENT='user-model'
 export TBT_USER_API_KEY='<runtime-secret>'
 ```
 
-Supply the judge as a ThinkingBox `LLMSessionConfigT` JSON object:
+Supply the judge as a ThinkingBox `LLMSessionConfigT` JSON object in an
+environment variable:
 
 ```bash
 export JUDGE_CONFIG='{
@@ -340,7 +341,12 @@ export JUDGE_CONFIG='{
 
 Use secret injection appropriate for your environment. Do not write real
 credentials into shell history, configuration committed to Git, or training
-artifacts.
+artifacts. The launcher passes only the environment-variable name through
+Hydra; the reward worker resolves the value immediately before constructing
+the judge session. The key therefore does not appear in process arguments,
+dry-run output, resolved Verl configuration logs, or tracking configuration.
+Set `JUDGE_CONFIG_ENV` only when using an environment-variable name other than
+`JUDGE_CONFIG`.
 
 ## Prepare a private training list
 
@@ -378,7 +384,8 @@ python data/prepare_data.py \
 ```
 
 The CLI prints aggregate counts only. UID lists, statistics, and manifests
-remain private runtime artifacts.
+remain private runtime artifacts. Generated selector files are top-level YAML
+lists and can be passed directly to the documented dataset-loader adapter.
 
 ## Validate the launch without training
 
@@ -392,7 +399,9 @@ export THINKINGBOX_DATA="$HOME/q38-workspace/thinkingbox-data"
 export MODEL=/models/Qwen3.8-27B
 export TEST_LIST=/secure/q38/prepared/train.yaml
 export VAL_LIST=/secure/q38/prepared/test.yaml
-export PROXY_URL=http://127.0.0.1:7111
+export THINKINGBOX_MCP_PROXY_URL=http://127.0.0.1:7111
+export CHECKPOINT_DIR=/shared/q38/runs/q38-full-rlft/checkpoints
+export SHARED_CHECKPOINTS_CONFIRMED=true
 ```
 
 Render the exact launcher configuration without starting Ray or training:
@@ -428,7 +437,12 @@ export THINKINGBOX_MCP_PROXY_URL=http://mcp-proxy.example:7111
 export TBT_USER_ENDPOINT_URL=https://provider.example/v1/chat/completions
 export TBT_USER_DEPLOYMENT=user-model
 export TBT_USER_API_KEY='<runtime-secret>'
+export JUDGE_CONFIG_ENV=JUDGE_CONFIG
+# Export JUDGE_CONFIG as shown above on every node.
 export PYTHONPATH="/secure/q38:${PYTHONPATH:-}"
+export NODES=3
+export CHECKPOINT_DIR=/shared/q38/runs/q38-full-rlft/checkpoints
+export SHARED_CHECKPOINTS_CONFIRMED=true
 
 # Head node.
 ROLE=head NODE_IP="$HEAD_IP" GPUS_PER_NODE=8 \
@@ -440,10 +454,11 @@ ROLE=worker NODE_IP="$WORKER_IP" \
   ./scripts/start_ray.sh
 ```
 
-`start_ray.sh` validates the dataset-loader import and runtime compatibility
-hook before starting Ray, prepends the virtualenv `bin` directory to `PATH`
-(required for `ninja`), and propagates the same loader, MCP, user-model, and
-offline-model environment to workers.
+`start_ray.sh` verifies the three pinned Verl patches, validates the
+dataset-loader import and runtime compatibility hook before starting Ray,
+prepends the virtualenv `bin` directory to `PATH` (required for `ninja`), and
+propagates the same loader, MCP, user-model, judge, and offline-model
+environment to workers.
 
 After all 24 GPUs appear in `ray status`, launch once from the head node:
 
@@ -469,8 +484,7 @@ export AGENT_LOOP_WORKERS=6
   trainer.project_name=thinkingbox-training \
   trainer.experiment_name=q38-full-rlft \
   trainer.total_training_steps=50 \
-  trainer.save_freq=5 \
-  trainer.default_local_dir=/secure/q38/runs/q38-full-rlft/checkpoints
+  trainer.save_freq=5
 ```
 
 The launcher supplies the validated Q38 profile: seed 42, shuffled data,
@@ -485,6 +499,13 @@ MCP sessions. They are not the same setting. Six live workers was validated
 with one proxy during the release review. Capacity-test the proxy before
 raising concurrency.
 
+For `NODES>1`, `CHECKPOINT_DIR` must be an existing absolute directory on one
+POSIX filesystem mounted at the same path on every node. Identical node-local
+paths are not sufficient: each rank writes its own model, optimizer, and
+extra-state shard. The launcher requires
+`SHARED_CHECKPOINTS_CONFIRMED=true`, owns `trainer.default_local_dir`, and
+verifies any existing latest checkpoint before automatic resume.
+
 The launcher fails closed when:
 
 - selected GPUs do not match `GPUS_PER_NODE`;
@@ -493,6 +514,9 @@ The launcher fails closed when:
 - prompts × rollouts does not divide by effective data parallelism;
 - the model, task list, dataset, loader, agent loop, MCP proxy, or judge
   configuration is missing;
+- the two MCP proxy environment variables disagree;
+- multi-node shared-checkpoint storage is not explicitly confirmed;
+- an existing resumable checkpoint lacks any expected rank shard or metadata;
 - patched Verl or the Qwen3.8 process-local compatibility hook is inactive.
 
 ## Create a merged inference checkpoint
@@ -503,10 +527,15 @@ into a standard Hugging Face model before serving:
 ```bash
 source ~/q38-workspace/thinkingbox-training/.venv/bin/activate
 
-export RUN_ROOT=/secure/q38/runs/q38-full-rlft
+export RUN_ROOT=/shared/q38/runs/q38-full-rlft
 export STEP=50
 export ACTOR_CHECKPOINT="$RUN_ROOT/checkpoints/global_step_$STEP/actor"
 export MERGED_MODEL="$RUN_ROOT/merged/global_step_$STEP"
+
+python scripts/verify_checkpoint.py \
+  --checkpoint-root "$RUN_ROOT/checkpoints" \
+  --step "$STEP" \
+  --world-size 24
 
 python -m verl.model_merger merge \
   --backend fsdp \

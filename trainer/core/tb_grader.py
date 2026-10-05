@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -18,7 +20,7 @@ async def compute_score(
 	ground_truth: Any,
 	extra_info: dict[str, Any],
 	*,
-	judge_config: dict[str, Any],
+	judge_config_env: str,
 	judge_type: str = "motivation",
 	fixtures_config: dict[str, Any] | None = None,
 	system_error_score: float | None = None,
@@ -34,6 +36,15 @@ async def compute_score(
 	if not isinstance(test_uid, str) or not test_uid:
 		raise ValueError("ThinkingBox reward requires non-empty tb_test_uid")
 
+	if not judge_config_env.isidentifier():
+		raise ValueError("judge_config_env must name an environment variable")
+	raw_judge_config = os.getenv(judge_config_env)
+	if not raw_judge_config:
+		raise ValueError("judge configuration environment variable is unset")
+	try:
+		judge_config = json.loads(raw_judge_config)
+	except json.JSONDecodeError as error:
+		raise ValueError("judge configuration is not valid JSON") from error
 	validated_judge_config = TypeAdapter(LLMSessionConfigT).validate_python(
 		judge_config
 	)

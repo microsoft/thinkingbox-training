@@ -653,9 +653,8 @@ def _json_bytes(document: Any) -> bytes:
 
 
 def _yaml_uid_bytes(uids: Iterable[str]) -> bytes:
-    document = {"uids": sorted(uids)}
     return yaml.safe_dump(
-        document,
+        sorted(uids),
         allow_unicode=True,
         sort_keys=False,
         default_flow_style=False,

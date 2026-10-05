@@ -19,7 +19,14 @@ MODEL=${MODEL:-}
 TEST_LIST=${TEST_LIST:-}
 VAL_LIST=${VAL_LIST:-}                 # defaults to TEST_LIST
 AGENT=${AGENT:-think}
-PROXY_URL=${PROXY_URL:-http://127.0.0.1:7112}
+PROXY_URL_INPUT=${PROXY_URL:-}
+MCP_PROXY_URL_INPUT=${THINKINGBOX_MCP_PROXY_URL:-}
+if [[ -n $PROXY_URL_INPUT && -n $MCP_PROXY_URL_INPUT && \
+      $PROXY_URL_INPUT != "$MCP_PROXY_URL_INPUT" ]]; then
+  echo "error: PROXY_URL and THINKINGBOX_MCP_PROXY_URL disagree" >&2
+  exit 1
+fi
+PROXY_URL=${MCP_PROXY_URL_INPUT:-${PROXY_URL_INPUT:-http://127.0.0.1:7112}}
 AGENT_LOOP_CONFIG=${AGENT_LOOP_CONFIG:-$HERE/trainer/agent_loop.yaml}
 DATASET_LOADER=${THINKINGBOX_DATASET_LOADER:-}
 
@@ -50,6 +57,8 @@ AGENT_LOOP_WORKERS=${AGENT_LOOP_WORKERS:-6}
 SEED=${SEED:-42}
 LEARNING_RATE=${LEARNING_RATE:-1e-6}
 DRY_RUN=${DRY_RUN:-false}
+CHECKPOINT_DIR=${CHECKPOINT_DIR:-$HERE/checkpoints}
+SHARED_CHECKPOINTS_CONFIRMED=${SHARED_CHECKPOINTS_CONFIRMED:-false}
                                        # cannot allocate any KV cache and refuses to start.
 # Offload actor params/optimizer to CPU between phases. On by default because
 # verl colocates: the actor's weights, grads and Adam state share each GPU with
@@ -58,7 +67,7 @@ DRY_RUN=${DRY_RUN:-false}
 # optimizer sharded across 6-8 GPUs. Set OFFLOAD=false only if you have verified
 # both fit -- it is faster when it does.
 OFFLOAD=${OFFLOAD:-true}
-JUDGE_CONFIG=${JUDGE_CONFIG:-}
+JUDGE_CONFIG_ENV=${JUDGE_CONFIG_ENV:-JUDGE_CONFIG}
 
 N_GPUS=$(awk -F, '{print NF}' <<<"$GPUS")
 GPUS_PER_NODE=${GPUS_PER_NODE:-$N_GPUS}
@@ -76,7 +85,9 @@ require_value THINKINGBOX_DATA
 require_value THINKINGBOX_DATASET_LOADER
 require_value MODEL
 require_value TEST_LIST
-require_value JUDGE_CONFIG
+[[ $JUDGE_CONFIG_ENV =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || \
+  fail "JUDGE_CONFIG_ENV must name an environment variable"
+require_value "$JUDGE_CONFIG_ENV"
 
 [[ $NODES =~ ^[1-9][0-9]*$ ]] || fail "NODES must be a positive integer"
 [[ $GPUS_PER_NODE =~ ^[1-9][0-9]*$ ]] || \
@@ -89,6 +100,20 @@ require_value JUDGE_CONFIG
   fail "AGENT_LOOP_WORKERS must be a positive integer"
 
 TOTAL_GPUS=$((NODES * GPUS_PER_NODE))
+
+if ((NODES > 1)); then
+  [[ $CHECKPOINT_DIR == /* ]] || \
+    fail "multi-node CHECKPOINT_DIR must be an absolute shared path"
+  [[ -d $CHECKPOINT_DIR ]] || \
+    fail "multi-node CHECKPOINT_DIR must already exist on the shared filesystem"
+  [[ $SHARED_CHECKPOINTS_CONFIRMED == true ]] || \
+    fail "set SHARED_CHECKPOINTS_CONFIRMED=true after mounting CHECKPOINT_DIR on every node"
+fi
+
+for override in "$@"; do
+  [[ $override != *trainer.default_local_dir=* ]] || \
+    fail "set CHECKPOINT_DIR instead of overriding trainer.default_local_dir"
+done
 
 if [[ $AGENT_LOOP_CONFIG == "$HERE/trainer/agent_loop.yaml" ]]; then
   require_value TBT_USER_API_KEY
@@ -111,6 +136,15 @@ PY
 
 if [[ -n $VAL_LIST && ! -f $VAL_LIST ]]; then
   fail "validation test list not found: $VAL_LIST"
+fi
+
+if [[ -f $CHECKPOINT_DIR/latest_checkpointed_iteration.txt ]]; then
+  LATEST_STEP=$(<"$CHECKPOINT_DIR/latest_checkpointed_iteration.txt")
+  "$VENV/bin/python" "$HERE/scripts/verify_checkpoint.py" \
+    --checkpoint-root "$CHECKPOINT_DIR" \
+    --step "$LATEST_STEP" \
+    --world-size "$TOTAL_GPUS" >/dev/null || \
+    fail "latest checkpoint is incomplete or not visible from the launch node"
 fi
 
 ((N_GPUS == GPUS_PER_NODE)) || \
@@ -138,7 +172,8 @@ EOF
 fi
 
 # Validate Azure CLI only when the selected judge configuration requests it.
-if [[ $JUDGE_CONFIG == *'"type":"az-cli"'* ]]; then
+JUDGE_CONFIG_VALUE=${!JUDGE_CONFIG_ENV}
+if [[ $JUDGE_CONFIG_VALUE == *'"type":"az-cli"'* ]]; then
   command -v az >/dev/null 2>&1 || \
     fail "judge configuration requires Azure CLI, but az is unavailable"
   az account get-access-token \
@@ -162,6 +197,7 @@ launching training
   offload    $OFFLOAD
   proxy      $PROXY_URL
   agent loop $AGENT_LOOP_CONFIG
+  checkpoints $CHECKPOINT_DIR
 EOF
 
 # ----------------------------------------------------------------------- launch
@@ -190,7 +226,7 @@ exec "$VENV/bin/python" -m trainer.train \
   --dataset-loader "$DATASET_LOADER" \
   --agent "$AGENT" \
   --mcp-proxy-url "$PROXY_URL" \
-  --judge-config "$JUDGE_CONFIG" \
+  --judge-config-env "$JUDGE_CONFIG_ENV" \
   --agent-loop-config "$AGENT_LOOP_CONFIG" \
   --group-size "$GROUP_SIZE" \
   --train-batch-size "$BATCH_SIZE" \
@@ -231,5 +267,6 @@ exec "$VENV/bin/python" -m trainer.train \
   trainer.val_before_train=false \
   trainer.test_freq=-1 \
   trainer.resume_mode=auto \
+  trainer.default_local_dir="$CHECKPOINT_DIR" \
   'trainer.logger=[console]' \
   "$@"

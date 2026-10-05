@@ -88,13 +88,9 @@ def _parser() -> argparse.ArgumentParser:
         default=os.getenv("THINKINGBOX_MCP_PROXY_URL", "http://localhost:8000"),
     )
     parser.add_argument(
-        "--judge-config",
-        default=os.getenv(
-            "TBT_JUDGE_CONFIG",
-            '{"type":"aoai","deployment":"JUDGE_DEPLOYMENT",'
-            '"account_name":"AZURE_OPENAI_ACCOUNT"}',
-        ),
-        help="ThinkingBox LLMSessionConfigT encoded as JSON.",
+        "--judge-config-env",
+        default=os.getenv("TBT_JUDGE_CONFIG_ENV", "JUDGE_CONFIG"),
+        help="Environment variable containing ThinkingBox LLMSessionConfigT JSON.",
     )
     parser.add_argument("--judge-type", default="motivation")
     parser.add_argument(
@@ -135,8 +131,17 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _build_overrides(args: argparse.Namespace) -> list[str]:
-    judge_config = _json_object(args.judge_config, "--judge-config")
     fixtures_config = _json_object(args.fixtures_config, "--fixtures-config")
+
+    if not args.judge_config_env.isidentifier():
+        raise ValueError("--judge-config-env must name an environment variable")
+    judge_config_value = os.getenv(args.judge_config_env)
+    if not judge_config_value:
+        raise ValueError(
+            f"judge configuration environment variable is unset: "
+            f"{args.judge_config_env}"
+        )
+    _json_object(judge_config_value, args.judge_config_env)
 
     if args.group_size < 2 and args.algorithm == "grpo":
         raise ValueError("GRPO requires --group-size of at least 2")
@@ -190,8 +195,8 @@ def _build_overrides(args: argparse.Namespace) -> list[str]:
         "reward.reward_manager.name=naive",
         f"reward.custom_reward_function.path={DEFAULT_GRADER}",
         "reward.custom_reward_function.name=compute_score",
-        "+reward.custom_reward_function.reward_kwargs.judge_config="
-        + _hydra_value(judge_config),
+        "+reward.custom_reward_function.reward_kwargs.judge_config_env="
+        + _hydra_value(args.judge_config_env),
         f"+reward.custom_reward_function.reward_kwargs.judge_type={args.judge_type}",
         "+reward.custom_reward_function.reward_kwargs.fixtures_config="
         + _hydra_value(fixtures_config),
