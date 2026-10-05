@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -174,8 +175,31 @@ def verify_final_tree(
 
 
 def install(destination: Path, python: str) -> None:
-    run(
-        [
+    uv = shutil.which("uv")
+    if uv is not None:
+        command = [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            python,
+            "--no-deps",
+            "--force-reinstall",
+            str(destination),
+        ]
+    else:
+        pip_check = subprocess.run(
+            [python, "-m", "pip", "--version"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if pip_check.returncode != 0:
+            raise fail(
+                "installation requires uv on PATH or pip in the target "
+                f"interpreter: {python}"
+            )
+        command = [
             python,
             "-m",
             "pip",
@@ -183,9 +207,8 @@ def install(destination: Path, python: str) -> None:
             "--no-deps",
             "--force-reinstall",
             str(destination),
-        ],
-        capture=False,
-    )
+        ]
+    run(command, capture=False)
 
 
 def parser() -> argparse.ArgumentParser:

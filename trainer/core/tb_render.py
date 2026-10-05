@@ -45,6 +45,12 @@ def anchored(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(DELTA_ANCHOR), dict(DELTA_ANCHOR_QUERY), *messages]
 
 
+def is_anchored_delta(messages: Sequence[dict[str, Any]]) -> bool:
+    """Return whether a render starts with the private delta anchor pair."""
+
+    return list(messages[:2]) == [DELTA_ANCHOR, DELTA_ANCHOR_QUERY]
+
+
 def _token_ids(rendered) -> list[int]:
     """Normalize ``apply_chat_template`` output to a flat id list.
 

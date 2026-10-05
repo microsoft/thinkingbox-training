@@ -28,13 +28,13 @@ DATASET_LOADER=${THINKINGBOX_DATASET_LOADER:-}
 # the GPU count.
 GPUS=${GPUS:-0,1,2,3,4,5,6,7}
 NODES=${NODES:-1}
-SEQUENCE_PARALLEL_SIZE=${SEQUENCE_PARALLEL_SIZE:-1}
-ROLLOUT_TP_SIZE=${ROLLOUT_TP_SIZE:-${TP:-2}}
+SEQUENCE_PARALLEL_SIZE=${SEQUENCE_PARALLEL_SIZE:-4}
+ROLLOUT_TP_SIZE=${ROLLOUT_TP_SIZE:-${TP:-4}}
 # GRPO rollouts per prompt. Advantage is reward minus the group mean, so a group
 # whose rollouts all score the same yields zero gradient -- 8 gives a reasonable
 # spread. BATCH_SIZE*GROUP_SIZE must be divisible by effective data parallelism.
 GROUP_SIZE=${GROUP_SIZE:-8}
-BATCH_SIZE=${BATCH_SIZE:-8}            # distinct prompts per step (8x8 = 64 trajectories)
+BATCH_SIZE=${BATCH_SIZE:-18}           # reference: 18x8 = 144 trajectories
 # Set generously: verl LEFT-truncates anything longer, silently dropping the
 # system prompt and tool schemas off the front while still grading against the
 # full task. It only warns, from inside a Ray worker, so it is easy to miss.
@@ -42,9 +42,14 @@ BATCH_SIZE=${BATCH_SIZE:-8}            # distinct prompts per step (8x8 = 64 tra
 # nested tensors rather than padding to it, and vLLM's max_model_len is a
 # separate knob, so headroom is free. Tool-heavy tasks can render substantially
 # longer prompts than their user query alone suggests.
-MAX_PROMPT=${MAX_PROMPT:-32768}
-MAX_RESPONSE=${MAX_RESPONSE:-8192}     # whole episode: generations + observations + user turns
-GPU_MEM=${GPU_MEM:-0.4}                # vLLM share. Below ~0.25 a 14B model at TP=2
+MAX_PROMPT=${MAX_PROMPT:-26624}
+MAX_RESPONSE=${MAX_RESPONSE:-106496}   # whole episode: generations + observations + user turns
+MAX_MODEL_LEN=${MAX_MODEL_LEN:-133120}
+GPU_MEM=${GPU_MEM:-0.70}
+AGENT_LOOP_WORKERS=${AGENT_LOOP_WORKERS:-6}
+SEED=${SEED:-42}
+LEARNING_RATE=${LEARNING_RATE:-1e-6}
+DRY_RUN=${DRY_RUN:-false}
                                        # cannot allocate any KV cache and refuses to start.
 # Offload actor params/optimizer to CPU between phases. On by default because
 # verl colocates: the actor's weights, grads and Adam state share each GPU with
@@ -80,6 +85,8 @@ require_value JUDGE_CONFIG
   fail "SEQUENCE_PARALLEL_SIZE must be a positive integer"
 [[ $ROLLOUT_TP_SIZE =~ ^[1-9][0-9]*$ ]] || \
   fail "ROLLOUT_TP_SIZE must be a positive integer"
+[[ $AGENT_LOOP_WORKERS =~ ^[1-9][0-9]*$ ]] || \
+  fail "AGENT_LOOP_WORKERS must be a positive integer"
 
 TOTAL_GPUS=$((NODES * GPUS_PER_NODE))
 
@@ -92,6 +99,11 @@ fi
 [[ -x $VENV/bin/python ]] || fail "no venv at $VENV -- run: uv venv -p 3.12 .venv && uv pip install -e '.[dev]'"
 "$VENV/bin/python" "$HERE/scripts/verify_verl_install.py" >/dev/null || \
   fail "Verl installation does not match the required patched v0.9.0 source"
+"$VENV/bin/python" - <<'PY' || fail "Qwen3.8 runtime compatibility is inactive"
+from accelerate import big_modeling
+
+assert getattr(big_modeling.init_on_device, "_thinkingbox_patched", False)
+PY
 [[ -d $MODEL ]]           || fail "model not found: $MODEL"
 [[ -f $TEST_LIST ]]       || fail "test list not found: $TEST_LIST"
 [[ -d $DATA/dataset ]]    || fail "dataset checkout not found: $DATA/dataset"
@@ -156,9 +168,21 @@ EOF
 export CUDA_VISIBLE_DEVICES=$GPUS
 export THINKINGBOX_DATA=$DATA
 export THINKINGBOX_DATASET_LOADER=$DATASET_LOADER
+export THINKINGBOX_MCP_PROXY_URL=$PROXY_URL
+export PATH="$VENV/bin:$PATH"
+export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 
+train_args=()
+if [[ $DRY_RUN == true ]]; then
+  train_args+=(--dry-run)
+elif [[ $DRY_RUN != false ]]; then
+  fail "DRY_RUN must be true or false"
+fi
+
 exec "$VENV/bin/python" -m trainer.train \
+  "${train_args[@]}" \
+  --tool-format qwen3_coder \
   --model "$MODEL" \
   --train-files "$TEST_LIST" \
   ${VAL_LIST:+--val-files "$VAL_LIST"} \
@@ -175,15 +199,37 @@ exec "$VENV/bin/python" -m trainer.train \
   --nodes "$NODES" \
   --gpus-per-node "$GPUS_PER_NODE" \
   -- \
+  data.seed="$SEED" \
+  data.shuffle=true \
+  actor_rollout_ref.model.use_remove_padding=true \
+  actor_rollout_ref.model.enable_gradient_checkpointing=true \
+  actor_rollout_ref.model.use_fused_kernels=true \
   actor_rollout_ref.actor.ulysses_sequence_parallel_size="$SEQUENCE_PARALLEL_SIZE" \
+  actor_rollout_ref.actor.fsdp_config.ulysses_sequence_parallel_size="$SEQUENCE_PARALLEL_SIZE" \
+  actor_rollout_ref.ref.ulysses_sequence_parallel_size="$SEQUENCE_PARALLEL_SIZE" \
+  actor_rollout_ref.actor.optim.lr="$LEARNING_RATE" \
+  actor_rollout_ref.rollout.multi_turn.enable=true \
+  actor_rollout_ref.rollout.agent.num_workers="$AGENT_LOOP_WORKERS" \
   actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP_SIZE" \
   actor_rollout_ref.rollout.gpu_memory_utilization="$GPU_MEM" \
+  actor_rollout_ref.rollout.max_model_len="$MAX_MODEL_LEN" \
+  actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+  actor_rollout_ref.rollout.temperature=1.0 \
+  actor_rollout_ref.rollout.top_k=20 \
+  actor_rollout_ref.rollout.top_p=0.95 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.fsdp_config.param_offload="$OFFLOAD" \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload="$OFFLOAD" \
   actor_rollout_ref.actor.ppo_mini_batch_size="$BATCH_SIZE" \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
+  algorithm.use_kl_in_reward=false \
+  algorithm.filter_groups.enable=true \
+  algorithm.filter_groups.metric=score \
+  algorithm.filter_groups.max_num_gen_batches=0 \
+  trainer.v1.sampler.sync_refill_failed_groups=true \
   trainer.val_before_train=false \
+  trainer.test_freq=-1 \
+  trainer.resume_mode=auto \
   'trainer.logger=[console]' \
   "$@"

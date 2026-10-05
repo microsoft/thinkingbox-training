@@ -126,15 +126,31 @@ uv pip install --config-settings editable-mode=compat \
   -e ../thinkingbox-data/servers/thinkingbox_tools
 uv pip install --config-settings editable-mode=compat \
   -e ../thinkingbox-data/servers/tb_business_ops_servers_202606
-uv pip install -e '.[fast,tracking]'
+uv pip install -e '.[tracking]'
+
+# Compiled extensions are a separate stage. Use compatible prebuilt wheels
+# when available; otherwise this host must expose CUDA_HOME and nvcc.
+uv pip install packaging ninja
+uv pip install --no-build-isolation \
+  flash-attn==2.8.3.post1 \
+  causal-conv1d==1.6.2.post1
 
 python scripts/prepare_verl.py --dest .deps/verl --install
 python scripts/verify_verl_install.py
 
 uv pip check
 python -c \
-  "import torch, transformers, vllm, verl, ray, thinkingbox, trainer.train"
+  "import torch, transformers, vllm, verl, ray, thinkingbox, trainer.train, sitecustomize"
 ```
+
+`prepare_verl.py --install` prefers `uv pip --python <environment-python>` and
+falls back to `python -m pip` only when uv is unavailable. The target
+environment therefore does not need to contain the pip module.
+
+On restricted hosts, stage exact source archives and compatible wheels from an
+internet-connected machine, verify their hashes after transfer, and replace
+the editable source paths above with the extracted local paths. Do not replace
+the patched Verl installation with the unmodified PyPI wheel.
 
 ### Required Verl compatibility changes
 
@@ -161,6 +177,13 @@ python scripts/verify_verl_install.py
 The operation is idempotent and fails on modified, partially patched, or
 incompatible source. `run_train.sh` invokes the verifier before launch, so
 vanilla or replaced Verl cannot silently start the reference recipe.
+
+The installed package also provides a small process-local compatibility hook
+through `sitecustomize.py`. It preserves Accelerate's Hugging Face parameter
+initialization marker and makes text-only Qwen3.8 agent-loop batches use
+one-dimensional position IDs. The hook is loaded in the driver and in every
+Ray worker; both `start_ray.sh` and `run_train.sh` fail closed when it is not
+active.
 
 Do not run an automatic package sync after installing the patched checkout;
 it may replace the source installation with the vanilla wheel. A future
@@ -372,30 +395,15 @@ export VAL_LIST=/secure/q38/prepared/test.yaml
 export PROXY_URL=http://127.0.0.1:7111
 ```
 
-Render the Verl/Hydra configuration without starting Ray or training:
+Render the exact launcher configuration without starting Ray or training:
 
 ```bash
-python -m trainer.train \
-  --dry-run \
-  --tool-format qwen3_coder \
-  --model "$MODEL" \
-  --train-files "$TEST_LIST" \
-  --val-files "$VAL_LIST" \
-  --dataset-root "$THINKINGBOX_DATA/dataset" \
-  --dataset-loader "$THINKINGBOX_DATASET_LOADER" \
-  --mcp-proxy-url "$PROXY_URL" \
-  --judge-config "$JUDGE_CONFIG" \
-  --group-size 8 \
-  --nodes 3 \
-  --gpus-per-node 8 \
-  --train-batch-size 18 \
-  --max-prompt-length 26624 \
-  --max-response-length 106496 \
-  -- \
-  actor_rollout_ref.actor.ulysses_sequence_parallel_size=4 \
-  actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
-  actor_rollout_ref.rollout.max_model_len=133120 \
-  actor_rollout_ref.actor.optim.lr=1e-6 \
+DRY_RUN=true \
+NODES=3 \
+GPUS_PER_NODE=8 \
+SEQUENCE_PARALLEL_SIZE=4 \
+ROLLOUT_TP_SIZE=4 \
+./scripts/run_train.sh \
   trainer.total_training_steps=50 \
   trainer.save_freq=5
 ```
@@ -406,24 +414,36 @@ Review every emitted override before running the job.
 
 The launcher configures training; it does not provision hosts. Prepare an
 identical checkout, model, environment, task list, and service configuration on
-all nodes. Start one Ray head and join the remaining workers according to your
-cluster's networking and scheduler policy.
+all nodes. Ray must be started after the runtime environment variables are
+set: existing daemons do not acquire later `PATH` or `PYTHONPATH` changes.
 
 For a manually managed trusted network, the shape is:
 
 ```bash
-# Head node
-ray start --head \
-  --node-ip-address="$HEAD_IP" \
-  --port=6379 \
-  --num-gpus=8
+# Set these on every node without printing secrets.
+export VENV="$HOME/q38-workspace/thinkingbox-training/.venv"
+export THINKINGBOX_DATA="$HOME/q38-workspace/thinkingbox-data"
+export THINKINGBOX_DATASET_LOADER=public_dataset_loader:load_cases
+export THINKINGBOX_MCP_PROXY_URL=http://mcp-proxy.example:7111
+export TBT_USER_ENDPOINT_URL=https://provider.example/v1/chat/completions
+export TBT_USER_DEPLOYMENT=user-model
+export TBT_USER_API_KEY='<runtime-secret>'
+export PYTHONPATH="/secure/q38:${PYTHONPATH:-}"
 
-# Each worker node
-ray start \
-  --address="$HEAD_IP:6379" \
-  --node-ip-address="$WORKER_IP" \
-  --num-gpus=8
+# Head node.
+ROLE=head NODE_IP="$HEAD_IP" GPUS_PER_NODE=8 \
+  ./scripts/start_ray.sh
+
+# Each worker node.
+ROLE=worker NODE_IP="$WORKER_IP" \
+  HEAD_ADDRESS="$HEAD_IP:6379" GPUS_PER_NODE=8 \
+  ./scripts/start_ray.sh
 ```
+
+`start_ray.sh` validates the dataset-loader import and runtime compatibility
+hook before starting Ray, prepends the virtualenv `bin` directory to `PATH`
+(required for `ninja`), and propagates the same loader, MCP, user-model, and
+offline-model environment to workers.
 
 After all 24 GPUs appear in `ray status`, launch once from the head node:
 
@@ -443,17 +463,27 @@ export MAX_PROMPT=26624
 export MAX_RESPONSE=106496
 export GPU_MEM=0.70
 export OFFLOAD=true
+export AGENT_LOOP_WORKERS=6
 
 ./scripts/run_train.sh \
-  actor_rollout_ref.rollout.multi_turn.format=qwen3_coder \
-  actor_rollout_ref.rollout.max_model_len=133120 \
-  actor_rollout_ref.actor.optim.lr=1e-6 \
   trainer.project_name=thinkingbox-training \
   trainer.experiment_name=q38-full-rlft \
   trainer.total_training_steps=50 \
   trainer.save_freq=5 \
   trainer.default_local_dir=/secure/q38/runs/q38-full-rlft/checkpoints
 ```
+
+The launcher supplies the validated Q38 profile: seed 42, shuffled data,
+remove-padding, gradient checkpointing, fused kernels, actor/reference SP4,
+TP4 sampling at temperature 1.0/top-k 20/top-p 0.95, learning rate `1e-6`,
+CPU parameter/optimizer offload, KL disabled, synchronous failed-group refill,
+validation disabled, test frequency disabled, and automatic checkpoint resume.
+Explicit trailing Hydra overrides can intentionally replace these defaults.
+
+`GROUP_SIZE` controls rollouts per prompt; `AGENT_LOOP_WORKERS` controls live
+MCP sessions. They are not the same setting. Six live workers was validated
+with one proxy during the release review. Capacity-test the proxy before
+raising concurrency.
 
 The launcher fails closed when:
 
@@ -462,7 +492,8 @@ The launcher fails closed when:
 - world size does not divide by sequence parallelism;
 - prompts × rollouts does not divide by effective data parallelism;
 - the model, task list, dataset, loader, agent loop, MCP proxy, or judge
-  configuration is missing.
+  configuration is missing;
+- patched Verl or the Qwen3.8 process-local compatibility hook is inactive.
 
 ## Create a merged inference checkpoint
 

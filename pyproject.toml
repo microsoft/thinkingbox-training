@@ -62,3 +62,6 @@ causal-conv1d = ["torch==2.13.0", "numpy==2.3.5", "packaging", "wheel"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["trainer*"]
+
+[tool.setuptools]
+py-modules = ["sitecustomize"]

@@ -10,6 +10,7 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, TypeAdapter
+from thinkingbox.common.agent_session import AgentSession
 from thinkingbox.common.agent_user_loop import run_agent_user_loop
 from thinkingbox.common.chat_types import (
     Message,
@@ -40,12 +41,35 @@ from trainer.core.tb_interpret import VllmInterpretation
 from trainer.core.tb_render import (
     anchored,
     build_delta_anchor_prefix,
+    is_anchored_delta,
     strip_delta_anchor,
 )
 
 _THINK_BLOCK = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
+
+
+def response_budget_exhausted_message() -> Text:
+    """Terminate a rollout cleanly when no trainable response budget remains."""
+
+    return Text(
+        role="assistant",
+        content="Generation stopped at the response token limit. <DONE>",
+        metadata={"response_budget_exhausted": True, "is_done": True},
+    )
+
+
+def make_agent_session_factory(agent_model: LLMSessionBase):
+    """Adapt a verl-backed model session to ThinkingBox's session factory API."""
+
+    def factory(**factory_kwargs):
+        return AgentSession.from_config(
+            agent_model=agent_model,
+            **factory_kwargs,
+        )
+
+    return factory
 
 
 def strip_special_tokens(text: str, special_tokens: Iterable[str]) -> str:
@@ -301,7 +325,7 @@ class VerlLLMSession(LLMSessionBase):
 
         await self._append_pending_observations()
         if len(self.response_mask) >= self.response_length:
-            return []
+            return [response_budget_exhausted_message()]
 
         sampling_params = dict(self.sampling_params)
         # Per-turn generation cap, mirroring eval serving's
@@ -474,17 +498,8 @@ class ThinkingBoxAgentLoop(AgentLoopBase):
             else None
         )
         self.tool_parser = ToolParser.get_tool_parser(rollout_format, self.tokenizer)
-        # Delta renders must measure the anchor prefix through the SAME
-        # processing class and template kwargs as verl's own
-        # apply_chat_template: verl renders through the processor whenever
-        # one resolves (Qwen3VLProcessor here), whose chat template differs
-        # from the tokenizer's — a tokenizer-measured prefix then fails the
-        # per-render verification on every delta.
-        processing_class = (
-            self.processor if self.processor is not None else self.tokenizer
-        )
         self.delta_anchor_prefix = build_delta_anchor_prefix(
-            processing_class,
+            self.tokenizer,
             **(getattr(self, "apply_chat_template_kwargs", None) or {}),
         )
         # For Qwen3.5/3.8, interpret model output exactly as the eval
@@ -494,6 +509,55 @@ class ThinkingBoxAgentLoop(AgentLoopBase):
             if rollout_format == "qwen3_coder"
             else None
         )
+
+    async def apply_chat_template(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        images=None,
+        videos=None,
+        audios=None,
+        mm_processor_kwargs=None,
+        remove_system_prompt: bool = False,
+    ):
+        """Render text-only delta fragments without verl's prompt truncation."""
+
+        if not is_anchored_delta(messages):
+            return await super().apply_chat_template(
+                messages,
+                tools=tools,
+                images=images,
+                videos=videos,
+                audios=audios,
+                mm_processor_kwargs=mm_processor_kwargs,
+                remove_system_prompt=remove_system_prompt,
+            )
+        if images or videos or audios:
+            raise ValueError("ThinkingBox anchored deltas support text-only rollouts")
+
+        tokenized = await self.loop.run_in_executor(
+            None,
+            lambda: self.tokenizer.apply_chat_template(
+                messages,
+                tools=tools,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=False,
+                **self.apply_chat_template_kwargs,
+            ),
+        )
+        if hasattr(tokenized, "keys"):
+            tokenized = tokenized["input_ids"]
+        if hasattr(tokenized, "tolist"):
+            tokenized = tokenized.tolist()
+        while tokenized and isinstance(tokenized[0], list):
+            if len(tokenized) != 1:
+                raise ValueError("anchored render produced a batched token sequence")
+            tokenized = tokenized[0]
+        prompt_ids = [int(token_id) for token_id in tokenized]
+        if remove_system_prompt:
+            prompt_ids = prompt_ids[len(self.system_prompt) :]
+        return prompt_ids
 
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
         extra_info = kwargs.get("extra_info") or {}
@@ -534,7 +598,7 @@ class ThinkingBoxAgentLoop(AgentLoopBase):
         ) as mcp_proxy:
             result = await run_agent_user_loop(
                 test_case,
-                agent_model=session,
+                agent_session_factory=make_agent_session_factory(session),
                 mcp_proxy=mcp_proxy,
                 user_model=user_model,
                 store_test_context=True,
