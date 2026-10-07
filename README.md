@@ -1,259 +1,143 @@
-# Qwen3.8-27B Training with ThinkingBox
+# ThinkingBox Training
 
-This branch contains the full-parameter reinforcement-learning integration used
-to train a tool-using Qwen3.8-27B policy with executable ThinkingBox rewards.
-It connects ThinkingBox task hydration, multi-turn MCP rollouts, simulated-user
-interaction, executable grading, and Verl's synchronous GRPO trainer.
+**Executable database-state rewards for multi-turn agent post-training.**
 
-The repository contains training code only. It does **not** contain training
-tasks, probe trajectories, generated task selections, model weights,
-credentials, endpoint configuration, or evaluation results.
+ThinkingBox Training connects stateful [ThinkingBox](https://github.com/microsoft/thinkingbox) tasks to online reinforcement learning. It selects tasks relative to the policy being trained, runs isolated multi-turn MCP episodes with a simulated user, evaluates terminal backend state and side effects, and returns the binary outcome to [Verl](https://github.com/verl-project/verl).
 
-## Scope
+[Paper](https://arxiv.org/abs/2608.19741) · [ThinkingBox](https://github.com/microsoft/thinkingbox) · [ThinkingBox-Bench](https://huggingface.co/datasets/microsoft/ThinkingBox-Bench) · [Benchmark blog](https://huggingface.co/blog/microsoft/thinkingbox) · [OpenEnv docs](https://huggingface.co/docs/openenv/environments/thinkingbox)
 
-The documented reference topology is:
+## Results at a glance
 
-- Qwen3.8-27B full-parameter training;
-- KL-free GRPO;
-- 3 nodes × 8 GPUs = world size 24;
-- Ulysses sequence parallelism 4 and effective data parallelism 6;
-- rollout tensor parallelism 4;
-- 18 prompts × 8 rollouts per update;
-- 50 optimizer updates;
-- executable ThinkingBox terminal reward.
+The reference Qwen3.8-27B full-parameter run used a task pool disjoint from the 507 public benchmark tasks.
 
-The implementation also retains generic single-node, PPO, Hermes tool-format,
-and alternative-topology support.
+| Measure | Base Qwen3.8-27B | RL fine-tuned |
+|---|---:|---:|
+| Average success (pass@1) | 51.70% | **60.78%** |
+| Tasks completed on all 20 attempts | 38 | **107** |
+| Tasks completed at least once in 20 | 89.35% | 87.97% |
+
+The pass@1 result is reported in the [paper](https://arxiv.org/abs/2608.19741). The repeated-trial values were aggregated after publication from the same 507 × 20 evaluation campaigns with the public `tb agg` implementation. Training tasks and evaluation tasks are UID-disjoint but use the same sandbox and workflow domains; this is held-out task transfer, not an out-of-distribution claim.
+
+## What this repository provides
+
+- policy-probe aggregation and policy-relative difficulty filtering;
+- deterministic benchmark-UID exclusion and grouped train/validation splitting;
+- runtime ThinkingBox task hydration without a flattened training snapshot;
+- token-exact multi-turn MCP rollouts with a simulated user;
+- Qwen reasoning/tool-call parsing aligned with evaluation semantics;
+- executable terminal-state rewards with explicit system-error handling;
+- synchronous GRPO and generic PPO launch support;
+- a validated three-node Qwen3.8-27B reference configuration;
+- three pinned Verl v0.9.0 compatibility patches;
+- checkpoint merge and ThinkingBox-Bench evaluation procedures;
+- 39 public development selectors for exercising the interface.
+
+Provide an authorized ThinkingBox-compatible task source at runtime. Keep training selectors disjoint from the public benchmark used for final evaluation.
+
+## How it works
+
+1. **Select:** probe the base policy and retain tasks whose outcomes can provide useful contrast.
+2. **Hydrate:** load the executable task, tools, fixtures, user context, and test code at runtime.
+3. **Roll out:** run isolated multi-turn agent/tool/user episodes against fresh backend state.
+4. **Check:** execute task-specific checks over terminal state and side effects. Most rewards are deterministic; a minority of narrow rubric requirements can invoke the configured binary judge.
+5. **Update:** return the binary task verdict to Verl for the policy update.
+6. **Evaluate:** run the resulting checkpoint on the disjoint ThinkingBox-Bench task list.
+
+## Compute paths
+
+| Path | Purpose | Hardware |
+|---|---|---|
+| Selector hydration | Verify the public development list and loader contract | CPU |
+| Configuration dry run | Resolve trainer/Verl overrides without starting Ray | CPU; no training starts |
+| Custom training | Train with an authorized task source | Depends on model, context, and rollout concurrency |
+| Reference Qwen3.8 full-parameter run | Paper/reference topology | 3 nodes × 8 H100 GPUs; world 24, SP4, effective DP6, rollout TP4 |
+| Merged-checkpoint inference | Serve Qwen3.8-27B BF16 | One 80 GB GPU can hold roughly 54 GB of weights; capacity depends on context and concurrency |
 
 ## Repository layout
 
 ```text
 data/
-  prepare_data.py        private-output data-curation CLI
-  helpers/utils.py       aggregation, posterior, selection, and split helpers
+  prepare_data.py                    probe aggregation and task selection CLI
+  examples/
+    training_tasks.example.yaml      39 public development selectors
+    exclusion_uids.example.yaml      benchmark-exclusion interface example
+  helpers/utils.py                   posterior, selection, and split helpers
+patches/verl/v0.9.0/                 pinned Verl compatibility patches
 scripts/
-  run_train.sh           validated training launcher
+  prepare_verl.py                    clone, verify, patch, and install Verl
+  verify_verl_install.py             validate the patched source
+  run_train.sh                       fail-closed training launcher
+  start_ray.sh                       validated Ray startup and worker environment
+  run_eval.sh                        benchmark evaluation launcher
+  validate_eval_results.py           evaluation coverage and repair validation
+  verify_checkpoint.py               distributed checkpoint completeness gate
 trainer/
-  train.py               Verl/Hydra entry point
-  agent_loop.yaml        MCP and simulated-user configuration
+  train.py                           CLI and Verl/Hydra entry point
+  agent_loop.yaml                    MCP and simulated-user configuration
+  runtime_compat.py                  Qwen3.8 runtime compatibility checks
   core/
-    tb_dataset.py        ThinkingBox-to-Verl dataset adapter
-    tb_roller.py         token-exact multi-turn rollout loop
-    tb_render.py         verified Qwen delta rendering
-    tb_interpret.py      Qwen reasoning and tool-call interpretation
-    tb_grader.py         executable ThinkingBox reward
+    tb_dataset.py                    ThinkingBox-to-Verl dataset adapter
+    tb_roller.py                     token-exact multi-turn rollout loop
+    tb_render.py                     verified Qwen delta rendering
+    tb_interpret.py                  reasoning/tool-call interpretation
+    tb_grader.py                     executable ThinkingBox reward bridge
+docs/
+  data-preparation.md                task hydration, samples, and selection
+  reference-q38-run.md               environment and 24-H100 reference run
+  evaluation.md                      checkpoint merge and 507 × 20 evaluation
 ```
 
-## Data boundary
+## Start here
 
-Training and evaluation data have different purposes:
-
-- **Training:** supply an authorized task list at runtime. Training selectors
-  must be disjoint from the public benchmark used for final evaluation.
-- **Evaluation:** ThinkingBox-Bench v1.0 contains 507 public tasks and is
-  intended exclusively for evaluation. Do not train on its tasks, expected
-  outcomes, golden state, or trajectories.
-
-A task list is a YAML list of selectors:
-
-```yaml
-- example_tasks.py:test_first_workflow
-- example_tasks.py:test_second_workflow
-```
-
-The selectors must resolve in the supplied `thinkingbox-data` checkout or an
-authorized dataset with the same public ThinkingBox layout.
-
-## Prerequisites
-
-- Linux or WSL
-- Python 3.12
-- `uv`
-- NVIDIA GPUs with a CUDA/NCCL stack compatible with the pinned packages
-- a local Qwen3.8-27B checkpoint
-- an OpenAI-compatible simulated-user endpoint
-- a ThinkingBox-compatible judge endpoint
-
-Install basic system tools on Ubuntu:
+The launch release is `v0.1.0`. Keep the public repositories side by side:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git curl tar coreutils procps
-
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$HOME/.local/bin/env"
-```
-
-## Clone the public repositories
-
-Keep the repositories side by side:
-
-```bash
-mkdir -p ~/q38-workspace
-cd ~/q38-workspace
+mkdir -p ~/thinkingbox-workspace
+cd ~/thinkingbox-workspace
 
 git clone https://github.com/microsoft/thinkingbox.git
 git clone https://github.com/microsoft/thinkingbox-data.git
 git clone https://github.com/microsoft/thinkingbox-training.git
 
-# Until this work becomes the default branch, select its published branch.
-git -C thinkingbox-training checkout '<q38-training-branch-or-release-tag>'
-```
-
-For the canonical 507-task evaluation, pin the public benchmark release:
-
-```bash
+git -C thinkingbox-training checkout v0.1.0
+git -C thinkingbox checkout 892964e7226044e5463ad188da119df838f4bec1
 git -C thinkingbox-data checkout thinkingbox-bench-v1.0
 ```
 
-For training, use an authorized task source that is disjoint from the
-benchmark. If training and evaluation need different data revisions, use
-separate `thinkingbox-data` worktrees or clones and record both revisions.
-
-## Create the training environment
-
-Create one environment from `thinkingbox-training` and install the public
-framework and MCP server packages into it:
+### 1. Create the validated environment
 
 ```bash
-cd ~/q38-workspace/thinkingbox-training
+cd ~/thinkingbox-workspace/thinkingbox-training
 
 uv venv --python 3.12
 source .venv/bin/activate
 
+uv sync --frozen --extra fast --extra tracking
 uv pip install -e ../thinkingbox
 uv pip install --config-settings editable-mode=compat \
   -e ../thinkingbox-data/servers/thinkingbox_tools
 uv pip install --config-settings editable-mode=compat \
   -e ../thinkingbox-data/servers/tb_business_ops_servers_202606
-uv pip install -e '.[tracking]'
-
-# Compiled extensions are a separate stage. Use compatible prebuilt wheels
-# when available; otherwise this host must expose CUDA_HOME and nvcc.
-uv pip install packaging ninja
-uv pip install --no-build-isolation \
-  flash-attn==2.8.3.post1 \
-  causal-conv1d==1.6.2.post1
 
 python scripts/prepare_verl.py --dest .deps/verl --install
 python scripts/verify_verl_install.py
-
 uv pip check
-python -c \
-  "import torch, transformers, vllm, verl, ray, thinkingbox, trainer.train, sitecustomize"
 ```
 
-`prepare_verl.py --install` prefers `uv pip --python <environment-python>` and
-falls back to `python -m pip` only when uv is unavailable. The target
-environment therefore does not need to contain the pip module.
+Expected final gates include:
 
-On restricted hosts, stage exact source archives and compatible wheels from an
-internet-connected machine, verify their hashes after transfer, and replace
-the editable source paths above with the extracted local paths. Do not replace
-the patched Verl installation with the unmodified PyPI wheel.
-
-### Required Verl compatibility changes
-
-`pyproject.toml` pins the validated upstream version, `verl==0.9.0`. The
-reference 27B runtime also requires three small compatibility changes:
-
-1. move an FSDP-offloaded `lm_head` weight to the hidden-state CUDA device
-   before fused linear cross-entropy;
-2. synchronize/reduce-scatter every microbatch instead of retaining
-   unsharded accumulated FP32 gradients;
-3. classify Qwen3.8 as multimodal only when actual multimodal inputs are
-   present, so text-only inputs receive Ulysses sequence slicing.
-
-The repository carries these changes as three reviewable git-format patches
-under `patches/verl/v0.9.0/`. The preparation script clones exact upstream
-commit `483b8a009ba3a97563edee3a19887e4862b8094a`, verifies source and patch
-hashes, applies the series, and installs the patched checkout:
-
-```bash
-python scripts/prepare_verl.py --dest .deps/verl --install
-python scripts/verify_verl_install.py
+```text
+{"status": "verified", ...}
+No broken requirements found
 ```
 
-The operation is idempotent and fails on modified, partially patched, or
-incompatible source. `run_train.sh` invokes the verifier before launch, so
-vanilla or replaced Verl cannot silently start the reference recipe.
+Do not run an automatic package sync after installing the patched Verl checkout; it can replace the source installation with the vanilla wheel.
 
-The installed package also provides a small process-local compatibility hook
-through `sitecustomize.py`. It preserves Accelerate's Hugging Face parameter
-initialization marker and makes text-only Qwen3.8 agent-loop batches use
-one-dimensional position IDs. The hook is loaded in the driver and in every
-Ray worker; both `start_ray.sh` and `run_train.sh` fail closed when it is not
-active.
-
-Do not run an automatic package sync after installing the patched checkout;
-it may replace the source installation with the vanilla wheel. A future
-upstream release containing equivalent fixes can replace this patch step after
-parity validation.
-
-## Public dataset-loader adapter
-
-The trainer accepts a runtime `module:function` loader. The public ThinkingBox
-framework already exposes strict selector hydration through
-`thinkingbox.common.hydrator.iter_cases_by_names`.
-
-Create an adapter outside the Git checkout:
-
-```bash
-mkdir -p /secure/q38
-cat >/secure/q38/public_dataset_loader.py <<'PY'
-from pathlib import Path
-
-import yaml
-from thinkingbox.common.hydrator import iter_cases_by_names
-
-
-def load_cases(list_file, *, agent, dataset_root):
-    names = yaml.safe_load(Path(list_file).read_text(encoding="utf-8"))
-    if not isinstance(names, list) or not all(
-        isinstance(name, str) and name for name in names
-    ):
-        raise ValueError("task list must be a non-empty YAML list of selectors")
-    yield from iter_cases_by_names(
-        names,
-        base_dir=dataset_root,
-        agent=agent,
-        strict=True,
-    )
-PY
-
-export PYTHONPATH="/secure/q38:${PYTHONPATH:-}"
-export THINKINGBOX_DATASET_LOADER=public_dataset_loader:load_cases
-```
-
-Keeping this adapter outside the checkout makes the dataset location and task
-selection runtime inputs rather than repository state.
-
-## Public sample task list
-
-`data/examples/training_tasks.example.yaml` contains 39 runnable selectors from
-five public development files in `thinkingbox-data`:
-
-- `airline_tau_bench.py`
-- `banking.py`
-- `banking_email.py`
-- `email_system_org.py`
-- `mcs_defaults.py`
-
-The list is pinned to public data revision
-`49eacaa530b07177d99acd1d0570ee117d43a20b`. None of its selectors occurs in
-the canonical ThinkingBox-Bench v1.0 507-task list. One additional function in
-`banking.py` is intentionally tagged `skip` upstream and is omitted because
-strict task hydration rejects skipped cases.
-
-**This sample list does not represent the actual training set used in our
-paper.**
-
-Validate all selectors before using the list:
+### 2. Validate the public development selectors
 
 ```bash
 python - <<'PY'
 from pathlib import Path
-
 import yaml
 from thinkingbox.common.hydrator import iter_cases_by_names
 
@@ -269,388 +153,151 @@ cases = list(
     )
 )
 assert len(cases) == len(selectors) == 39
-print("hydrated 39 public sample tasks")
+print("hydrated 39 public development tasks")
 PY
 ```
 
-Use the sample list with the launcher:
+Expected output:
 
-```bash
-export TEST_LIST="$PWD/data/examples/training_tasks.example.yaml"
+```text
+hydrated 39 public development tasks
 ```
 
-`data/examples/exclusion_uids.example.yaml` demonstrates the UID-list shape
-accepted by `data/prepare_data.py`. It is an interface example only; real
-training and exclusion lists remain private runtime inputs outside Git.
+### 3. Render a training configuration without launching a job
 
-## Install and start Typesense and MCP
-
-Install Typesense from the public ThinkingBox repository:
+Create the runtime-loader adapter, set placeholders, then render the reference topology:
 
 ```bash
-cd ~/q38-workspace/thinkingbox
-source ../thinkingbox-training/.venv/bin/activate
+export TB_WORKSPACE="$HOME/thinkingbox-workspace"
+export TB_RUN_ROOT="$HOME/thinkingbox-runs/interface-check"
+mkdir -p "$TB_RUN_ROOT"
 
-./scripts/install_typesense.sh
-typesense-server --version
-```
+cat >"$TB_RUN_ROOT/public_dataset_loader.py" <<'PY'
+from pathlib import Path
+import yaml
+from thinkingbox.common.hydrator import iter_cases_by_names
 
-Start Typesense and the MCP Session Proxy:
 
-```bash
-export THINKINGBOX_DATA="../thinkingbox-data"
-export TB_MCP_START_SERVERS_FILE="../thinkingbox-data/servers/servers.yaml"
-./scripts/background_tasks.sh
-```
+def load_cases(list_file, *, agent, dataset_root):
+    names = yaml.safe_load(Path(list_file).read_text(encoding="utf-8"))
+    yield from iter_cases_by_names(
+        names,
+        base_dir=dataset_root,
+        agent=agent,
+        strict=True,
+    )
+PY
 
-Wait for `All processes are running`. The public benchmark server
-configuration uses `TYPESENSE_API_KEY=Fake`. Keep this terminal running.
-
-The public background script starts the MCP proxy on port 7111, while the
-training launcher's generic default is 7112. Set the launch URL explicitly:
-
-```bash
-export THINKINGBOX_MCP_PROXY_URL=http://127.0.0.1:7111
-```
-
-## Configure user simulation and judging
-
-The default agent-loop configuration reads the simulated-user endpoint from
-environment variables:
-
-```bash
-export TBT_USER_ENDPOINT_URL='https://provider.example/v1/chat/completions'
-export TBT_USER_DEPLOYMENT='user-model'
-export TBT_USER_API_KEY='<runtime-secret>'
-```
-
-Supply the judge as a ThinkingBox `LLMSessionConfigT` JSON object in an
-environment variable:
-
-```bash
-export JUDGE_CONFIG='{
-  "type": "aoai",
-  "credential": {"type": "api-key", "api_key": "<runtime-secret>"},
-  "endpoint_url": "https://provider.example/v1/chat/completions",
-  "deployment": "judge-model",
-  "temperature": 0.0,
-  "max_completion_tokens": 128,
-  "timeout": 600.0
-}'
-```
-
-Use secret injection appropriate for your environment. Do not write real
-credentials into shell history, configuration committed to Git, or training
-artifacts. The launcher passes only the environment-variable name through
-Hydra; the reward worker resolves the value immediately before constructing
-the judge session. The key therefore does not appear in process arguments,
-dry-run output, resolved Verl configuration logs, or tracking configuration.
-Set `JUDGE_CONFIG_ENV` only when using an environment-variable name other than
-`JUDGE_CONFIG`.
-
-## Prepare a private training list
-
-`data/prepare_data.py` can aggregate private policy probes, classify
-policy-relative difficulty with Jeffreys posteriors, apply an optional stronger
-reference-model solvability gate, exclude benchmark UIDs, and produce a private
-selection or train/test split.
-
-All outputs are required to live outside this repository:
-
-```bash
-cd ~/q38-workspace/thinkingbox-training
-source .venv/bin/activate
-
-python data/prepare_data.py \
-  --policy /secure/q38/probes/policy.jsonl \
-  --reference /secure/q38/probes/reference.jsonl \
-  --exclude-uids /secure/q38/lists/evaluation_uids.yaml \
-  --output-dir /secure/q38/prepared \
-  --uid-field uid \
-  --success-field test_result.result \
-  --system-error-field is_system_error \
-  --reference-uid-field uid \
-  --reference-success-field test_result.result \
-  --reference-system-error-field is_system_error \
-  --min-clean-runs 4 \
-  --retain-band hard \
-  --retain-band medium \
-  --retain-band easy \
-  --reference-min-clean-runs 4 \
-  --reference-min-successes 1 \
-  --mode split \
-  --test-fraction 0.2 \
-  --seed 42
-```
-
-The CLI prints aggregate counts only. UID lists, statistics, and manifests
-remain private runtime artifacts. Generated selector files are top-level YAML
-lists and can be passed directly to the documented dataset-loader adapter.
-
-## Validate the launch without training
-
-Set runtime paths:
-
-```bash
-cd ~/q38-workspace/thinkingbox-training
-source .venv/bin/activate
-
-export THINKINGBOX_DATA="$HOME/q38-workspace/thinkingbox-data"
-export MODEL=/models/Qwen3.8-27B
-export TEST_LIST=/secure/q38/prepared/train.yaml
-export VAL_LIST=/secure/q38/prepared/test.yaml
-export THINKINGBOX_MCP_PROXY_URL=http://127.0.0.1:7111
-export CHECKPOINT_DIR=/shared/q38/runs/q38-full-rlft/checkpoints
-export SHARED_CHECKPOINTS_CONFIRMED=true
-```
-
-Render the exact launcher configuration without starting Ray or training:
-
-```bash
-DRY_RUN=true \
-NODES=3 \
-GPUS_PER_NODE=8 \
-SEQUENCE_PARALLEL_SIZE=4 \
-ROLLOUT_TP_SIZE=4 \
-./scripts/run_train.sh \
-  trainer.total_training_steps=50 \
-  trainer.save_freq=5
-```
-
-Review every emitted override before running the job.
-
-## Start a multi-node Q38 training run
-
-The launcher configures training; it does not provision hosts. Prepare an
-identical checkout, model, environment, task list, and service configuration on
-all nodes. Ray must be started after the runtime environment variables are
-set: existing daemons do not acquire later `PATH` or `PYTHONPATH` changes.
-
-For a manually managed trusted network, the shape is:
-
-```bash
-# Set these on every node without printing secrets.
-export VENV="$HOME/q38-workspace/thinkingbox-training/.venv"
-export THINKINGBOX_DATA="$HOME/q38-workspace/thinkingbox-data"
+export PYTHONPATH="$TB_RUN_ROOT:${PYTHONPATH:-}"
 export THINKINGBOX_DATASET_LOADER=public_dataset_loader:load_cases
-export THINKINGBOX_MCP_PROXY_URL=http://mcp-proxy.example:7111
-export TBT_USER_ENDPOINT_URL=https://provider.example/v1/chat/completions
-export TBT_USER_DEPLOYMENT=user-model
-export TBT_USER_API_KEY='<runtime-secret>'
-export JUDGE_CONFIG_ENV=JUDGE_CONFIG
-# Export JUDGE_CONFIG as shown above on every node.
-export PYTHONPATH="/secure/q38:${PYTHONPATH:-}"
-export NODES=3
-export CHECKPOINT_DIR=/shared/q38/runs/q38-full-rlft/checkpoints
-export SHARED_CHECKPOINTS_CONFIRMED=true
+export JUDGE_CONFIG='{
+  "type":"aoai",
+  "credential":{"type":"api-key","api_key":"placeholder"},
+  "endpoint_url":"https://provider.example/v1/chat/completions",
+  "deployment":"judge-model"
+}'
 
-# Head node.
-ROLE=head NODE_IP="$HEAD_IP" GPUS_PER_NODE=8 \
-  ./scripts/start_ray.sh
-
-# Each worker node.
-ROLE=worker NODE_IP="$WORKER_IP" \
-  HEAD_ADDRESS="$HEAD_IP:6379" GPUS_PER_NODE=8 \
-  ./scripts/start_ray.sh
-```
-
-`start_ray.sh` verifies the three pinned Verl patches, validates the
-dataset-loader import and runtime compatibility hook before starting Ray,
-prepends the virtualenv `bin` directory to `PATH` (required for `ninja`), and
-propagates the same loader, MCP, user-model, judge, and offline-model
-environment to workers.
-
-After all 24 GPUs appear in `ray status`, launch once from the head node:
-
-```bash
-cd ~/q38-workspace/thinkingbox-training
-source .venv/bin/activate
-
-export RAY_ADDRESS=auto
-export GPUS=0,1,2,3,4,5,6,7
-export NODES=3
-export GPUS_PER_NODE=8
-export SEQUENCE_PARALLEL_SIZE=4
-export ROLLOUT_TP_SIZE=4
-export BATCH_SIZE=18
-export GROUP_SIZE=8
-export MAX_PROMPT=26624
-export MAX_RESPONSE=106496
-export GPU_MEM=0.70
-export OFFLOAD=true
-export AGENT_LOOP_WORKERS=6
-
-./scripts/run_train.sh \
-  trainer.project_name=thinkingbox-training \
-  trainer.experiment_name=q38-full-rlft \
+python -m trainer.train \
+  --dry-run \
+  --tool-format qwen3_coder \
+  --model /path/to/Qwen3.8-27B \
+  --train-files data/examples/training_tasks.example.yaml \
+  --val-files data/examples/training_tasks.example.yaml \
+  --dataset-root "$TB_WORKSPACE/thinkingbox-data/dataset" \
+  --dataset-loader "$THINKINGBOX_DATASET_LOADER" \
+  --mcp-proxy-url http://127.0.0.1:7111 \
+  --judge-config-env JUDGE_CONFIG \
+  --group-size 8 \
+  --nodes 3 \
+  --gpus-per-node 8 \
+  --train-batch-size 18 \
+  --max-prompt-length 26624 \
+  --max-response-length 106496 \
+  -- \
+  actor_rollout_ref.actor.ulysses_sequence_parallel_size=4 \
+  actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
+  actor_rollout_ref.rollout.max_model_len=133120 \
+  actor_rollout_ref.actor.optim.lr=1e-6 \
   trainer.total_training_steps=50 \
   trainer.save_freq=5
 ```
 
-The launcher supplies the validated Q38 profile: seed 42, shuffled data,
-remove-padding, gradient checkpointing, fused kernels, actor/reference SP4,
-TP4 sampling at temperature 1.0/top-k 20/top-p 0.95, learning rate `1e-6`,
-CPU parameter/optimizer offload, KL disabled, synchronous failed-group refill,
-validation disabled, test frequency disabled, and automatic checkpoint resume.
-Explicit trailing Hydra overrides can intentionally replace these defaults.
-
-`GROUP_SIZE` controls rollouts per prompt; `AGENT_LOOP_WORKERS` controls live
-MCP sessions. They are not the same setting. Six live workers was validated
-with one proxy during the release review. Capacity-test the proxy before
-raising concurrency.
-
-For `NODES>1`, `CHECKPOINT_DIR` must be an existing absolute directory on one
-POSIX filesystem mounted at the same path on every node. Identical node-local
-paths are not sufficient: each rank writes its own model, optimizer, and
-extra-state shard. The launcher requires
-`SHARED_CHECKPOINTS_CONFIRMED=true`, owns `trainer.default_local_dir`, and
-verifies any existing latest checkpoint before automatic resume.
-
-The launcher fails closed when:
-
-- selected GPUs do not match `GPUS_PER_NODE`;
-- rollout TP does not divide GPUs per node;
-- world size does not divide by sequence parallelism;
-- prompts × rollouts does not divide by effective data parallelism;
-- the model, task list, dataset, loader, agent loop, MCP proxy, or judge
-  configuration is missing;
-- the two MCP proxy environment variables disagree;
-- multi-node shared-checkpoint storage is not explicitly confirmed;
-- an existing resumable checkpoint lacks any expected rank shard or metadata;
-- patched Verl or the Qwen3.8 process-local compatibility hook is inactive.
-
-## Create a merged inference checkpoint
-
-Verl training checkpoints are sharded FSDP state. Merge the actor directory
-into a standard Hugging Face model before serving:
-
-```bash
-source ~/q38-workspace/thinkingbox-training/.venv/bin/activate
-
-export RUN_ROOT=/shared/q38/runs/q38-full-rlft
-export STEP=50
-export ACTOR_CHECKPOINT="$RUN_ROOT/checkpoints/global_step_$STEP/actor"
-export MERGED_MODEL="$RUN_ROOT/merged/global_step_$STEP"
-
-python scripts/verify_checkpoint.py \
-  --checkpoint-root "$RUN_ROOT/checkpoints" \
-  --step "$STEP" \
-  --world-size 24
-
-python -m verl.model_merger merge \
-  --backend fsdp \
-  --local_dir "$ACTOR_CHECKPOINT" \
-  --target_dir "$MERGED_MODEL" \
-  --use_cpu_initialization
-```
-
-Before evaluation, verify that the target contains the model index, every
-referenced safetensors shard, tokenizer files, chat template, and model config.
-The merged model contains inference weights only; it cannot resume training.
-
-## Serve the merged Q38 checkpoint
-
-On an 8-GPU evaluation host:
-
-```bash
-source ~/q38-workspace/thinkingbox-training/.venv/bin/activate
-
-vllm serve "$MERGED_MODEL" \
-  --served-model-name q38-rlft \
-  --host 127.0.0.1 \
-  --port 8000 \
-  --tensor-parallel-size 8 \
-  --dtype bfloat16 \
-  --max-model-len 262144 \
-  --gpu-memory-utilization 0.85 \
-  --max-num-seqs 16 \
-  --max-num-batched-tokens 8192 \
-  --language-model-only \
-  --enable-chunked-prefill \
-  --enable-prefix-caching \
-  --reasoning-parser qwen3 \
-  --enable-auto-tool-choice \
-  --tool-call-parser qwen3_xml
-```
-
-Configure a ThinkingBox evaluation YAML whose agent endpoint is
-`http://127.0.0.1:8000/v1/chat/completions`, deployment is `q38-rlft`, and
-sampling is temperature 1.0, top-k 20, top-p 0.95. Configure the simulated
-user and judge through supported public providers as described in the
-[ThinkingBox LLM endpoint guide](https://github.com/microsoft/thinkingbox/blob/main/docs/llm_endpoint_config.md).
-
-## Run ThinkingBox-Bench 507 × 20
-
-ThinkingBox-Bench v1.0 is defined by:
+Expected output begins with the Verl entry point followed by the resolved overrides:
 
 ```text
-thinkingbox-data/releases/thinkingbox_bench_v1/
-testlist_thinkingbox_bench_v1.yaml
+python -m verl.trainer.main_ppo
+  actor_rollout_ref.model.path=...
+  data.train_batch_size=18
+  actor_rollout_ref.rollout.n=8
+  trainer.nnodes=3
+  trainer.n_gpus_per_node=8
 ```
 
-With Typesense, MCP, the Q38 vLLM server, and the configured simulated user and
-judge running:
+The command must exit zero without starting Ray or allocating GPUs. Review every emitted override before running a job.
 
-```bash
-cd ~/q38-workspace/thinkingbox-training
-source .venv/bin/activate
+## Choose your path
 
-export THINKINGBOX_ROOT="$HOME/q38-workspace/thinkingbox"
-export THINKINGBOX_DATA="$HOME/q38-workspace/thinkingbox-data"
-export EVAL_CONFIG=/secure/q38/eval.yaml
-export OUTPUT_DIR=/secure/q38/evaluation
+- **Prepare and select tasks:** [docs/data-preparation.md](docs/data-preparation.md)
+- **Run the Qwen3.8 reference configuration:** [docs/reference-q38-run.md](docs/reference-q38-run.md)
+- **Merge and evaluate a checkpoint:** [docs/evaluation.md](docs/evaluation.md)
+- **Review the pinned Verl changes:** [patches/verl/v0.9.0/README.md](patches/verl/v0.9.0/README.md)
 
-./scripts/run_eval.sh
-```
+## Reward semantics
 
-This run expects exactly:
+A judge endpoint is configured because task tests may contain narrow rubric requirements. It is not the primary reward model:
 
-```text
-507 tasks × 20 repetitions = 10,140 UID/repetition keys
-```
+| Path | When it applies | Reward source |
+|---|---|---|
+| Executable check—the large majority | Required outcome appears in terminal backend state or side effects | Deterministic test returns pass/fail without an LLM judge call |
+| Judge-assisted check—a minority | A narrow requirement cannot be determined cleanly from backend state | Configured judge answers a binary rubric question used by the executable test |
 
-`run_eval.sh` uses a finite queue-inactivity timeout, verifies exact
-selector/repetition coverage with no duplicates or system-error rows, and only
-then invokes `tb agg`. Outputs and generated run metadata must remain outside
-the Git checkout.
+The simulated user is a separate environment role and does not grade the policy. Use secret injection appropriate for your environment; never commit credentials or put real keys in shell history.
 
-If infrastructure errors occur, rerun only missing or system-error keys:
+## Reference Qwen3.8 configuration
 
-```bash
-PREVIOUS_RESULTS_FILE=/secure/q38/evaluation/q38_thinkingbox_bench_v1_20x.jsonl \
-RUN_NAME=q38_thinkingbox_bench_v1_20x_repaired \
-./scripts/run_eval.sh
-```
+| Setting | Value |
+|---|---|
+| Training paradigm | Full parameter, token-mean GRPO |
+| Training pool | 187 tasks |
+| Selected checkpoint | Step 50 |
+| Scheduled groups × rollouts | 18 × 8 |
+| Parallelism | World 24 / SP4 / effective DP6 / rollout TP4 |
+| GPUs | 24 H100s, shared by training and synchronous rollouts |
+| Learning rate | `1e-6` |
+| KL regularization | Disabled |
+| Parameter/optimizer offload | Enabled |
 
-For a bounded smoke test, provide a five-selector YAML list and override the
-expected shape:
+The launcher fails closed when the GPU count, topology, batch divisibility, model, task list, loader, agent loop, MCP proxy, judge, shared-checkpoint, or runtime-compatibility configuration is invalid.
 
-```bash
-TEST_LIST=/secure/q38/evaluation/smoke5.yaml \
-EXPECTED_TASKS=5 \
-REPEAT=2 \
-BATCH_SIZE=10 \
-RUN_NAME=q38_smoke5_2x \
-./scripts/run_eval.sh
-```
-
-Do not report a final score until the artifact has 10,140 unique expected
-keys, no duplicates, and zero system-error rows.
-
-## Reproducibility checklist
+## Run record checklist
 
 Record for every run:
 
 - `thinkingbox-training`, `thinkingbox`, and `thinkingbox-data` revisions;
 - model and tokenizer identity;
-- Verl patch identity;
-- installed package versions;
-- task-list and exclusion-list hashes without publishing their contents;
-- resolved Verl/Hydra overrides;
+- Verl baseline, patch manifest, and installed package lock;
+- task-list and exclusion-list hashes;
+- resolved trainer/Verl overrides;
 - world/SP/DP/rollout-TP topology;
-- sampling, context, timeout, user-model, and judge configuration;
+- sampling, context, timeout, simulator, and judge configuration;
 - checkpoint step and merge command;
-- exact evaluation coverage and aggregate metrics.
+- evaluation coverage, repair lineage, and aggregate metrics.
 
-Keep credentials, private task selectors, trajectories, generated selections,
-checkpoints, and evaluation JSONL outside Git.
+## Citation
+
+```bibtex
+@article{li2026thinkingbox,
+  title   = {One Success Isn't Reliability: Thinkingbox, a Sandbox and Benchmark for Agents in Stateful Business Workflows},
+  author  = {Li, Zhuochun and Ko, Youngmin and Keramati, Ali and Kundu, Tuhin and
+             Tsai, Liang-Chun and Ferri, Nicola and Milletari, Mirco and Liu, Jiaxiang and
+             Lopez Pelaez, Susana Palmaz and Wang, Yuepeng and Smolyakov, Vadim and
+             Jiang, Xiang and Olafsson, Kjartan and Guy, Tommy},
+  journal = {arXiv preprint arXiv:2608.19741},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2608.19741}
+}
+```
+
+## License
+
+ThinkingBox Training is licensed under the [MIT License](LICENSE). The Verl compatibility patches retain upstream file headers and attribution; see [patches/verl/v0.9.0/README.md](patches/verl/v0.9.0/README.md).

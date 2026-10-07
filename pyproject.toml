@@ -5,7 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "thinkingbox-training"
 version = "0.1.0"
-description = "Fine-tuning / RL training scripts built on top of the thinkingbox framework"
+description = "Executable database-state rewards for multi-turn agent post-training"
+readme = "README.md"
+license = "MIT"
+keywords = ["agents", "reinforcement-learning", "grpo", "mcp", "thinkingbox"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # Public ThinkingBox framework.
@@ -54,6 +57,19 @@ dev = [
     "ruff",
     "black",
 ]
+
+
+[project.urls]
+Homepage = "https://github.com/microsoft/thinkingbox-training"
+Repository = "https://github.com/microsoft/thinkingbox-training"
+Paper = "https://arxiv.org/abs/2608.19741"
+Documentation = "https://github.com/microsoft/thinkingbox-training/tree/v0.1.0/docs"
+
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+thinkingbox = { git = "https://github.com/microsoft/thinkingbox.git", rev = "892964e7226044e5463ad188da119df838f4bec1" }
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch==2.13.0", "packaging", "ninja"]
