@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+#
 # Example exclusion boundary for data/prepare_data.py.
 # This sample list does not represent the actual training set used in our paper.
 

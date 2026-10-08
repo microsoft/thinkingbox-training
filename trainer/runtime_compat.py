@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 """Compatibility hooks required by the validated Qwen3.8 full-RLFT runtime."""
 
 from __future__ import annotations

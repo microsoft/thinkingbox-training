@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 """Eval-parity interpretation of Qwen3.5/3.8 generations.
 
 The eval campaign's vLLM endpoint interpreted every generation with vLLM's

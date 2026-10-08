@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
 #
 # Start a Ray head or worker with the complete Qwen3.8 training environment.
 set -euo pipefail

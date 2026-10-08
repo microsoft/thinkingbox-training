@@ -300,4 +300,33 @@ Record for every run:
 
 ## License
 
-ThinkingBox Training is licensed under the [MIT License](LICENSE). The Verl compatibility patches retain upstream file headers and attribution; see [patches/verl/v0.9.0/README.md](patches/verl/v0.9.0/README.md).
+ThinkingBox Training is licensed under the [MIT License](LICENSE.TXT). The
+Verl compatibility patches retain upstream file headers and attribution; see
+[NOTICE](NOTICE) and
+[patches/verl/v0.9.0/README.md](patches/verl/v0.9.0/README.md).
+
+## Contributing
+
+Contributions are subject to Microsoft's Contributor License Agreement. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for contribution and validation guidance.
+
+## Code of Conduct
+
+This project has adopted the
+[Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+
+## Security
+
+Do not report security vulnerabilities through public GitHub issues. Report
+them privately to the Microsoft Security Response Center through the
+[MSRC reporting portal](https://msrc.microsoft.com/create-report).
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or
+services. Authorized use of Microsoft trademarks or logos is subject to and
+must follow
+[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
+Use of Microsoft trademarks or logos in modified versions of this project must
+not cause confusion or imply Microsoft sponsorship. Any use of third-party
+trademarks or logos is subject to those third parties' policies.

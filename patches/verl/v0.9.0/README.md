@@ -45,6 +45,7 @@ equivalent fix and Qwen3.8 parity validation passes against that release.
 ## License
 
 Verl is licensed under Apache License 2.0. These patch files are derivative
-diffs against that upstream source and retain the original file headers and
-upstream attribution. A copy of Verl's upstream license is included as
+diffs against that upstream source and are distributed under Apache License
+2.0. Upstream attribution is recorded in the repository's root `NOTICE` and
+in this document. A copy of Verl's upstream license is included as
 `UPSTREAM_LICENSE`.
