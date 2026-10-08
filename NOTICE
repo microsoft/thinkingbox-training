@@ -1,0 +1,25 @@
+ThinkingBox Training
+Copyright (c) Microsoft Corporation.
+
+This project includes patch files derived from Verl v0.9.0:
+
+  https://github.com/verl-project/verl
+  Tag: v0.9.0
+  Commit: 483b8a009ba3a97563edee3a19887e4862b8094a
+
+Upstream notice:
+
+  Copyright 2023-2024 Bytedance Ltd. and/or its affiliates
+
+Verl is licensed under the Apache License, Version 2.0. The patch files in
+patches/verl/v0.9.0 are derivative diffs against that upstream source and are
+distributed under the Apache License, Version 2.0. Upstream attribution is
+recorded in this NOTICE and in patches/verl/v0.9.0/README.md.
+
+A copy of the Apache License, Version 2.0 is included in the source repository
+at patches/verl/v0.9.0/UPSTREAM_LICENSE and is included as a legal file in the
+Python source and wheel distributions.
+
+The project does not vendor the Verl source tree. Other runtime dependencies
+are obtained from their respective public package or source repositories and
+remain subject to their own licenses.

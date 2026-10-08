@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 """Activate the validated Qwen3.8 runtime hooks in drivers and Ray workers."""
 
 try:

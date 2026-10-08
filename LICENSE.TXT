@@ -1,3 +1,4 @@
+ThinkingBox Training
 Copyright (c) Microsoft Corporation.
 
 MIT License

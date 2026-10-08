@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 - name: thinkingbox
   _target_: trainer.core.tb_roller.ThinkingBoxAgentLoop
   mcp_proxy:

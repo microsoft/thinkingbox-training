@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
 #
 # Launch GRPO or PPO training on a ThinkingBox task list.
 #

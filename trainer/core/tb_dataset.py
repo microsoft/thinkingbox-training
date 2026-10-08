@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 """verl dataset backed by a ThinkingBox dataset checkout.
 
 Point ``data.train_files`` at a test list (the same ``file.py:test_name`` YAML

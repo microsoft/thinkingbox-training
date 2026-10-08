@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
 #
 # Run a complete ThinkingBox evaluation and aggregate only exact clean coverage.
 set -euo pipefail

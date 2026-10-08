@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
 """Anchored rendering of conversation deltas into trajectory tokens.
 
 Observation deltas (tool responses, simulated-user turns) are appended to a
