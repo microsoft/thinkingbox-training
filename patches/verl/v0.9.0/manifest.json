@@ -1,0 +1,30 @@
+{
+  "schema": "thinkingbox-training.verl-patches/v1",
+  "upstream": "https://github.com/verl-project/verl.git",
+  "tag": "v0.9.0",
+  "commit": "483b8a009ba3a97563edee3a19887e4862b8094a",
+  "patches": [
+    {
+      "path": "0001-fused-lce-place-lm-head-on-hidden-device.patch",
+      "sha256": "a47f1c9efb87542530af05518eaf3018ca5ab79ca28906086673aeb83d8186a4"
+    },
+    {
+      "path": "0002-fsdp-sync-gradients-every-microbatch.patch",
+      "sha256": "4cc25bfa50bf78eb4c3a81016e0921ed75b60a3355d0d118c5d8f9071f785b37"
+    },
+    {
+      "path": "0003-qwen-ulysses-detect-actual-multimodal-input.patch",
+      "sha256": "5b4a1ae9de81b020769d2be44aa6f831b24e372be22609ffaa10028ef9a69554"
+    }
+  ],
+  "files": {
+    "verl/utils/kernel/linear_cross_entropy.py": {
+      "preimage_blob": "84191d748f7e95368e7b29b684e73e11c865ee62",
+      "postimage_blob": "2085403378eed966126eb6b0f63b5ac9d2bbaba3"
+    },
+    "verl/workers/engine/fsdp/transformer_impl.py": {
+      "preimage_blob": "dd5cf3311da22dd583cdf1f5c7d5e1de03f289af",
+      "postimage_blob": "7f0f765e2bdab237c1fc30a5f97c4e9984c5a29e"
+    }
+  }
+}
