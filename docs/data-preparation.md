@@ -8,38 +8,20 @@ The trainer accepts a runtime `module:function` loader. The public ThinkingBox
 framework already exposes strict selector hydration through
 `thinkingbox.common.hydrator.iter_cases_by_names`.
 
-Create an adapter in your run workspace:
+Use the repository's example adapter:
 
 ```bash
 export TB_RUN_ROOT="$HOME/thinkingbox-runs/q38"
 mkdir -p "$TB_RUN_ROOT"
-cat >"$TB_RUN_ROOT/public_dataset_loader.py" <<'PY'
-from pathlib import Path
 
-import yaml
-from thinkingbox.common.hydrator import iter_cases_by_names
-
-
-def load_cases(list_file, *, agent, dataset_root):
-    names = yaml.safe_load(Path(list_file).read_text(encoding="utf-8"))
-    if not isinstance(names, list) or not all(
-        isinstance(name, str) and name for name in names
-    ):
-        raise ValueError("task list must be a non-empty YAML list of selectors")
-    yield from iter_cases_by_names(
-        names,
-        base_dir=dataset_root,
-        agent=agent,
-        strict=True,
-    )
-PY
-
-export PYTHONPATH="$TB_RUN_ROOT:${PYTHONPATH:-}"
+export PYTHONPATH="$PWD/data/examples:${PYTHONPATH:-}"
 export THINKINGBOX_DATASET_LOADER=public_dataset_loader:load_cases
 ```
 
-Keeping this adapter outside the checkout makes the dataset location and task
-selection runtime inputs rather than repository state.
+Run these commands from the `thinkingbox-training` repository root. The
+[example adapter](../data/examples/public_dataset_loader.py) loads the dataset
+location and selector list supplied at runtime. For another data source, supply
+your own `module:function` loader.
 
 ## Public sample task list
 

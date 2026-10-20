@@ -2,7 +2,25 @@
 
 This guide documents the validated 24-H100 full-parameter configuration. The launcher configures training; it does not provision hosts.
 
-### Prerequisites
+The historical reference-run revision of ThinkingBox Training is
+`8c04db18da362357dc8a2d4ab187f44a8d63e20a`. The instructions below use the latest
+`main` revision, including the example dataset loader.
+
+## Reference configuration
+
+| Setting | Value |
+|---|---|
+| Training paradigm | Full parameter, token-mean GRPO |
+| Training pool | 187 tasks |
+| Selected checkpoint | Step 50 |
+| Scheduled groups × rollouts | 18 × 8 |
+| Parallelism | World 24 / SP4 / effective DP6 / rollout TP4 |
+| GPUs | 24 H100s, shared by training and synchronous rollouts |
+| Learning rate | `1e-6` |
+| KL regularization | Disabled |
+| Parameter/optimizer offload | Enabled |
+
+## Prerequisites
 
 - Linux or WSL
 - Python 3.12
@@ -22,7 +40,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 ```
 
-### Clone the public repositories
+## Clone the public repositories
 
 Keep the repositories side by side:
 
@@ -32,10 +50,7 @@ cd ~/thinkingbox-workspace
 
 git clone https://github.com/microsoft/thinkingbox.git
 git clone https://github.com/microsoft/thinkingbox-data.git
-git clone https://github.com/microsoft/thinkingbox-training.git
-
-# Use the immutable launch release once it is published.
-git -C thinkingbox-training checkout v0.1.0
+git clone --branch main https://github.com/microsoft/thinkingbox-training.git
 ```
 
 For the canonical 507-task evaluation, pin the public benchmark release:
@@ -46,7 +61,7 @@ git -C thinkingbox-data checkout thinkingbox-bench-v1.0
 
 For training, use an authorized task source that is disjoint from the benchmark. If training and evaluation require different data revisions, use separate `thinkingbox-data` worktrees or clones and record both revisions.
 
-### Create the training environment
+## Create the training environment
 
 Create one environment from `thinkingbox-training` and install the public
 framework and MCP server packages into it:
@@ -86,9 +101,9 @@ environment therefore does not need to contain the pip module.
 On restricted hosts, stage exact source archives and compatible wheels from an
 internet-connected machine, verify their hashes after transfer, and replace
 the editable source paths above with the extracted local paths. Do not replace
-the patched Verl installation with the unmodified PyPI wheel.
+the patched VeRL installation with the unmodified PyPI wheel.
 
-### Required Verl compatibility changes
+### Required VeRL compatibility changes
 
 `pyproject.toml` pins the validated upstream version, `verl==0.9.0`. The
 reference 27B runtime also requires three small compatibility changes:
@@ -112,7 +127,7 @@ python scripts/verify_verl_install.py
 
 The operation is idempotent and fails on modified, partially patched, or
 incompatible source. `run_train.sh` invokes the verifier before launch, so
-vanilla or replaced Verl cannot silently start the reference recipe.
+vanilla or replaced VeRL cannot silently start the reference recipe.
 
 The installed package also provides a small process-local compatibility hook
 through `sitecustomize.py`. It preserves Accelerate's Hugging Face parameter
@@ -187,7 +202,7 @@ credentials into shell history, configuration committed to Git, or training
 artifacts. The launcher passes only the environment-variable name through
 Hydra; the reward worker resolves the value immediately before constructing
 the judge session. The key therefore does not appear in process arguments,
-dry-run output, resolved Verl configuration logs, or tracking configuration.
+dry-run output, resolved VeRL configuration logs, or tracking configuration.
 Set `JUDGE_CONFIG_ENV` only when using an environment-variable name other than
 `JUDGE_CONFIG`.
 
@@ -204,13 +219,17 @@ The simulated user is a separate environment role: it supplies task information 
 
 ## Validate the launch without training
 
-Set runtime paths:
+Prepare the task lists using the [data-preparation guide](data-preparation.md),
+then set runtime paths:
 
 ```bash
 cd ~/thinkingbox-workspace/thinkingbox-training
 source .venv/bin/activate
 
 export THINKINGBOX_DATA="$HOME/thinkingbox-workspace/thinkingbox-data"
+export TB_RUN_ROOT="$HOME/thinkingbox-runs/q38"
+export PYTHONPATH="$PWD/data/examples:${PYTHONPATH:-}"
+export THINKINGBOX_DATASET_LOADER=public_dataset_loader:load_cases
 export MODEL=/path/to/Qwen3.8-27B
 export TEST_LIST=$TB_RUN_ROOT/prepared/train.yaml
 export VAL_LIST=$TB_RUN_ROOT/prepared/test.yaml
@@ -232,7 +251,7 @@ ROLLOUT_TP_SIZE=4 \
   trainer.save_freq=5
 ```
 
-Expected output begins with the Verl entry point followed by the resolved overrides, for example:
+Expected output begins with the VeRL entry point followed by the resolved overrides, for example:
 
 ```text
 python -m verl.trainer.main_ppo
@@ -265,7 +284,7 @@ export TBT_USER_DEPLOYMENT=user-model
 export TBT_USER_API_KEY='<runtime-secret>'
 export JUDGE_CONFIG_ENV=JUDGE_CONFIG
 # Export JUDGE_CONFIG as shown above on every node.
-export PYTHONPATH="$TB_RUN_ROOT:${PYTHONPATH:-}"
+export PYTHONPATH="$(dirname "$VENV")/data/examples:${PYTHONPATH:-}"
 export NODES=3
 export CHECKPOINT_DIR="$HOME/thinkingbox-runs/q38-full-rlft/checkpoints"
 export SHARED_CHECKPOINTS_CONFIRMED=true
@@ -280,7 +299,7 @@ ROLE=worker NODE_IP="$WORKER_IP" \
   ./scripts/start_ray.sh
 ```
 
-`start_ray.sh` verifies the three pinned Verl patches, validates the
+`start_ray.sh` verifies the three pinned VeRL patches, validates the
 dataset-loader import and runtime compatibility hook before starting Ray,
 prepends the virtualenv `bin` directory to `PATH` (required for `ninja`), and
 propagates the same loader, MCP, user-model, judge, and offline-model
@@ -332,7 +351,9 @@ extra-state shard. The launcher requires
 `SHARED_CHECKPOINTS_CONFIRMED=true`, owns `trainer.default_local_dir`, and
 verifies any existing latest checkpoint before automatic resume.
 
-The launcher fails closed when:
+## Launcher checks
+
+The launcher refuses to start when:
 
 - selected GPUs do not match `GPUS_PER_NODE`;
 - rollout TP does not divide GPUs per node;
@@ -343,4 +364,18 @@ The launcher fails closed when:
 - the two MCP proxy environment variables disagree;
 - multi-node shared-checkpoint storage is not explicitly confirmed;
 - an existing resumable checkpoint lacks any expected rank shard or metadata;
-- patched Verl or the Qwen3.8 process-local compatibility hook is inactive.
+- patched VeRL or the Qwen3.8 process-local compatibility hook is inactive.
+
+## Run record checklist
+
+Record for every run:
+
+- `thinkingbox-training`, `thinkingbox`, and `thinkingbox-data` revisions;
+- model and tokenizer identity;
+- VeRL baseline, patch manifest, and installed package lock;
+- task-list and exclusion-list hashes;
+- resolved trainer/VeRL overrides;
+- world/SP/DP/rollout-TP topology;
+- sampling, context, timeout, simulator, and judge configuration;
+- checkpoint step and merge command;
+- evaluation coverage, repair lineage, and aggregate metrics.
