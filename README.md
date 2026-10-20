@@ -2,13 +2,15 @@
 
 **Executable database-state rewards for multi-turn agent post-training.**
 
-ThinkingBox Training connects stateful [ThinkingBox](https://github.com/microsoft/thinkingbox) tasks to online reinforcement learning. It selects tasks relative to the policy being trained, runs isolated multi-turn MCP episodes with a simulated user, evaluates terminal backend state and side effects, and returns the binary outcome to [Verl](https://github.com/verl-project/verl).
+ThinkingBox Training trains tool-using agents with rewards from executable task checks. Each rollout gives the agent a fresh [ThinkingBox](https://github.com/microsoft/thinkingbox) backend, MCP tools, and a simulated user. When the episode ends, the checks inspect the resulting database state and side effects, then return a binary reward to [VeRL](https://github.com/verl-project/verl).
+
+Before training, we probe the base policy and select a fixed pool of tasks whose outcomes can provide useful contrast. The pool remains unchanged throughout the run.
+
+Most rewards come from deterministic checks of terminal backend state and side effects. Some tasks also use a narrow binary rubric answered by the configured judge. The simulated user is a separate environment role and does not grade the agent.
 
 [Paper](https://arxiv.org/abs/2608.19741) · [ThinkingBox](https://github.com/microsoft/thinkingbox) · [ThinkingBox-Bench](https://huggingface.co/datasets/microsoft/ThinkingBox-Bench) · [Benchmark blog](https://huggingface.co/blog/microsoft/thinkingbox) · [OpenEnv docs](https://huggingface.co/docs/openenv/environments/thinkingbox)
 
 ## Results at a glance
-
-The reference Qwen3.8-27B full-parameter run used a task pool disjoint from the 507 public benchmark tasks.
 
 | Measure | Base Qwen3.8-27B | RL fine-tuned |
 |---|---:|---:|
@@ -16,80 +18,35 @@ The reference Qwen3.8-27B full-parameter run used a task pool disjoint from the 
 | Tasks completed on all 20 attempts | 38 | **107** |
 | Tasks completed at least once in 20 | 89.35% | 87.97% |
 
-The pass@1 result is reported in the [paper](https://arxiv.org/abs/2608.19741). The repeated-trial values were aggregated after publication from the same 507 × 20 evaluation campaigns with the public `tb agg` implementation. Training tasks and evaluation tasks are UID-disjoint but use the same sandbox and workflow domains; this is held-out task transfer, not an out-of-distribution claim.
+The pass@1 result is reported in the [paper](https://arxiv.org/abs/2608.19741). The repeated-trial values were aggregated after publication from the same 507 × 20 evaluation campaigns with the public `tb agg` implementation. No ThinkingBox-Bench task was included in the training pool.
 
-## What this repository provides
+## What you can do
 
-- policy-probe aggregation and policy-relative difficulty filtering;
-- deterministic benchmark-UID exclusion and grouped train/validation splitting;
-- runtime ThinkingBox task hydration without a flattened training snapshot;
-- token-exact multi-turn MCP rollouts with a simulated user;
-- Qwen reasoning/tool-call parsing aligned with evaluation semantics;
-- executable terminal-state rewards with explicit system-error handling;
-- synchronous GRPO and generic PPO launch support;
-- a validated three-node Qwen3.8-27B reference configuration;
-- three pinned Verl v0.9.0 compatibility patches;
-- checkpoint merge and ThinkingBox-Bench evaluation procedures;
-- 39 public development selectors for exercising the interface.
+Prepare a training pool from policy probes, train agents on executable ThinkingBox tasks, and evaluate the resulting checkpoints. The repository includes a documented Qwen3.8-27B reference run and sample tasks for checking the integration.
 
 Provide an authorized ThinkingBox-compatible task source at runtime. Keep training selectors disjoint from the public benchmark used for final evaluation.
 
-## How it works
+### Training loop
 
-1. **Select:** probe the base policy and retain tasks whose outcomes can provide useful contrast.
-2. **Hydrate:** load the executable task, tools, fixtures, user context, and test code at runtime.
-3. **Roll out:** run isolated multi-turn agent/tool/user episodes against fresh backend state.
-4. **Check:** execute task-specific checks over terminal state and side effects. Most rewards are deterministic; a minority of narrow rubric requirements can invoke the configured binary judge.
-5. **Update:** return the binary task verdict to Verl for the policy update.
-6. **Evaluate:** run the resulting checkpoint on the disjoint ThinkingBox-Bench task list.
+Probe and select tasks → run isolated agent episodes → check terminal state → update the policy with VeRL.
 
-## Compute paths
+Evaluate the resulting checkpoint separately on ThinkingBox-Bench.
 
-| Path | Purpose | Hardware |
-|---|---|---|
-| Selector hydration | Verify the public development list and loader contract | CPU |
-| Configuration dry run | Resolve trainer/Verl overrides without starting Ray | CPU; no training starts |
-| Custom training | Train with an authorized task source | Depends on model, context, and rollout concurrency |
-| Reference Qwen3.8 full-parameter run | Paper/reference topology | 3 nodes × 8 H100 GPUs; world 24, SP4, effective DP6, rollout TP4 |
-| Merged-checkpoint inference | Serve Qwen3.8-27B BF16 | One 80 GB GPU can hold roughly 54 GB of weights; capacity depends on context and concurrency |
+## Getting started
 
-## Repository layout
+Install the stack and check the sample tasks below. Then follow the guides to [prepare a training pool](docs/data-preparation.md), [run the Qwen3.8 reference configuration](docs/reference-q38-run.md), or [merge and evaluate a checkpoint](docs/evaluation.md).
 
-```text
-data/
-  prepare_data.py                    probe aggregation and task selection CLI
-  examples/
-    training_tasks.example.yaml      39 public development selectors
-    exclusion_uids.example.yaml      benchmark-exclusion interface example
-  helpers/utils.py                   posterior, selection, and split helpers
-patches/verl/v0.9.0/                 pinned Verl compatibility patches
-scripts/
-  prepare_verl.py                    clone, verify, patch, and install Verl
-  verify_verl_install.py             validate the patched source
-  run_train.sh                       fail-closed training launcher
-  start_ray.sh                       validated Ray startup and worker environment
-  run_eval.sh                        benchmark evaluation launcher
-  validate_eval_results.py           evaluation coverage and repair validation
-  verify_checkpoint.py               distributed checkpoint completeness gate
-trainer/
-  train.py                           CLI and Verl/Hydra entry point
-  agent_loop.yaml                    MCP and simulated-user configuration
-  runtime_compat.py                  Qwen3.8 runtime compatibility checks
-  core/
-    tb_dataset.py                    ThinkingBox-to-Verl dataset adapter
-    tb_roller.py                     token-exact multi-turn rollout loop
-    tb_render.py                     verified Qwen delta rendering
-    tb_interpret.py                  reasoning/tool-call interpretation
-    tb_grader.py                     executable ThinkingBox reward bridge
-docs/
-  data-preparation.md                task hydration, samples, and selection
-  reference-q38-run.md               environment and 24-H100 reference run
-  evaluation.md                      checkpoint merge and 507 × 20 evaluation
-```
+### Requirements
 
-## Start here
+The stack targets Linux and Python 3.12. Training requires NVIDIA GPUs, a local model checkpoint, ThinkingBox services, and endpoints for the simulated user and judge-assisted checks.
 
-The launch release is `v0.1.0`. Keep the public repositories side by side:
+The documented Qwen3.8 full-parameter run uses three nodes with eight H100 GPUs each. Other configurations depend on model size, episode length, and rollout concurrency.
+
+Sample hydration and configuration checks do not launch GPU training. Installing the full training stack still requires the compatible CUDA/NCCL environment described in the [reference-run guide](docs/reference-q38-run.md).
+
+### Install
+
+Clone the latest `main` revision of ThinkingBox Training and keep the public repositories side by side:
 
 ```bash
 mkdir -p ~/thinkingbox-workspace
@@ -97,14 +54,11 @@ cd ~/thinkingbox-workspace
 
 git clone https://github.com/microsoft/thinkingbox.git
 git clone https://github.com/microsoft/thinkingbox-data.git
-git clone https://github.com/microsoft/thinkingbox-training.git
+git clone --branch main https://github.com/microsoft/thinkingbox-training.git
 
-git -C thinkingbox-training checkout v0.1.0
 git -C thinkingbox checkout 892964e7226044e5463ad188da119df838f4bec1
 git -C thinkingbox-data checkout thinkingbox-bench-v1.0
 ```
-
-### 1. Create the validated environment
 
 ```bash
 cd ~/thinkingbox-workspace/thinkingbox-training
@@ -124,16 +78,11 @@ python scripts/verify_verl_install.py
 uv pip check
 ```
 
-Expected final gates include:
+The VeRL verification should report `"status": "verified"`, and `uv pip check` should report no broken requirements.
 
-```text
-{"status": "verified", ...}
-No broken requirements found
-```
+Do not run an automatic package sync after installing the patched VeRL checkout; it can replace the source installation with the vanilla wheel.
 
-Do not run an automatic package sync after installing the patched Verl checkout; it can replace the source installation with the vanilla wheel.
-
-### 2. Validate the public development selectors
+### Check the sample tasks
 
 ```bash
 python - <<'PY'
@@ -163,32 +112,15 @@ Expected output:
 hydrated 39 public development tasks
 ```
 
-### 3. Render a training configuration without launching a job
+### Check the training configuration
 
-Create the runtime-loader adapter, set placeholders, then render the reference topology:
+The following command prints the resolved VeRL launch command. It does not start Ray or allocate GPUs. Placeholder model and endpoint values are for this configuration check only.
+
+Use the [example dataset loader](data/examples/public_dataset_loader.py) and set placeholders for the model and judge:
 
 ```bash
 export TB_WORKSPACE="$HOME/thinkingbox-workspace"
-export TB_RUN_ROOT="$HOME/thinkingbox-runs/interface-check"
-mkdir -p "$TB_RUN_ROOT"
-
-cat >"$TB_RUN_ROOT/public_dataset_loader.py" <<'PY'
-from pathlib import Path
-import yaml
-from thinkingbox.common.hydrator import iter_cases_by_names
-
-
-def load_cases(list_file, *, agent, dataset_root):
-    names = yaml.safe_load(Path(list_file).read_text(encoding="utf-8"))
-    yield from iter_cases_by_names(
-        names,
-        base_dir=dataset_root,
-        agent=agent,
-        strict=True,
-    )
-PY
-
-export PYTHONPATH="$TB_RUN_ROOT:${PYTHONPATH:-}"
+export PYTHONPATH="$PWD/data/examples:${PYTHONPATH:-}"
 export THINKINGBOX_DATASET_LOADER=public_dataset_loader:load_cases
 export JUDGE_CONFIG='{
   "type":"aoai",
@@ -222,7 +154,7 @@ python -m trainer.train \
   trainer.save_freq=5
 ```
 
-Expected output begins with the Verl entry point followed by the resolved overrides:
+Expected output begins with the VeRL entry point followed by the resolved overrides:
 
 ```text
 python -m verl.trainer.main_ppo
@@ -235,53 +167,31 @@ python -m verl.trainer.main_ppo
 
 The command must exit zero without starting Ray or allocating GPUs. Review every emitted override before running a job.
 
-## Choose your path
+## Train and evaluate
 
 - **Prepare and select tasks:** [docs/data-preparation.md](docs/data-preparation.md)
 - **Run the Qwen3.8 reference configuration:** [docs/reference-q38-run.md](docs/reference-q38-run.md)
 - **Merge and evaluate a checkpoint:** [docs/evaluation.md](docs/evaluation.md)
-- **Review the pinned Verl changes:** [patches/verl/v0.9.0/README.md](patches/verl/v0.9.0/README.md)
 
-## Reward semantics
+The full model, optimizer, parallelism, and launch settings are documented in the [Qwen3.8 reference-run guide](docs/reference-q38-run.md).
 
-A judge endpoint is configured because task tests may contain narrow rubric requirements. It is not the primary reward model:
+The launcher checks GPU allocation, batch divisibility, required services, checkpoint storage, and the patched VeRL installation before starting. See the reference-run guide for [troubleshooting](docs/reference-q38-run.md#launcher-checks) and the [information to record for each run](docs/reference-q38-run.md#run-record-checklist).
 
-| Path | When it applies | Reward source |
-|---|---|---|
-| Executable check—the large majority | Required outcome appears in terminal backend state or side effects | Deterministic test returns pass/fail without an LLM judge call |
-| Judge-assisted check—a minority | A narrow requirement cannot be determined cleanly from backend state | Configured judge answers a binary rubric question used by the executable test |
+Use secret injection appropriate for your environment; never commit credentials or put real keys in shell history.
 
-The simulated user is a separate environment role and does not grade the policy. Use secret injection appropriate for your environment; never commit credentials or put real keys in shell history.
+## Required VeRL patches
 
-## Reference Qwen3.8 configuration
+The reference configuration uses VeRL v0.9.0 with three pinned compatibility patches. The installation commands above apply and verify them. See the [patch documentation](patches/verl/v0.9.0/README.md) for the changes and their upstream revision.
 
-| Setting | Value |
-|---|---|
-| Training paradigm | Full parameter, token-mean GRPO |
-| Training pool | 187 tasks |
-| Selected checkpoint | Step 50 |
-| Scheduled groups × rollouts | 18 × 8 |
-| Parallelism | World 24 / SP4 / effective DP6 / rollout TP4 |
-| GPUs | 24 H100s, shared by training and synchronous rollouts |
-| Learning rate | `1e-6` |
-| KL regularization | Disabled |
-| Parameter/optimizer offload | Enabled |
+## Repository layout
 
-The launcher fails closed when the GPU count, topology, batch divisibility, model, task list, loader, agent loop, MCP proxy, judge, shared-checkpoint, or runtime-compatibility configuration is invalid.
-
-## Run record checklist
-
-Record for every run:
-
-- `thinkingbox-training`, `thinkingbox`, and `thinkingbox-data` revisions;
-- model and tokenizer identity;
-- Verl baseline, patch manifest, and installed package lock;
-- task-list and exclusion-list hashes;
-- resolved trainer/Verl overrides;
-- world/SP/DP/rollout-TP topology;
-- sampling, context, timeout, simulator, and judge configuration;
-- checkpoint step and merge command;
-- evaluation coverage, repair lineage, and aggregate metrics.
+```text
+data/       Task probing, selection, and splitting
+trainer/    ThinkingBox rollouts and VeRL integration
+scripts/    Training, evaluation, and installation helpers
+patches/    Required changes to the pinned VeRL version
+docs/       Preparation, training, and evaluation guides
+```
 
 ## Citation
 
@@ -301,7 +211,7 @@ Record for every run:
 ## License
 
 ThinkingBox Training is licensed under the [MIT License](LICENSE.TXT). The
-Verl compatibility patches retain upstream file headers and attribution; see
+VeRL compatibility patches retain upstream file headers and attribution; see
 [NOTICE](NOTICE) and
 [patches/verl/v0.9.0/README.md](patches/verl/v0.9.0/README.md).
 
