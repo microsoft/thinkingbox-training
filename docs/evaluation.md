@@ -41,13 +41,14 @@ source ~/thinkingbox-workspace/thinkingbox-training/.venv/bin/activate
 vllm serve "$MERGED_MODEL" \
   --served-model-name q38-rlft \
   --host 127.0.0.1 \
-  --port 8000 \
+  --port 8001 \
   --tensor-parallel-size 8 \
   --dtype bfloat16 \
   --max-model-len 262144 \
   --gpu-memory-utilization 0.85 \
   --max-num-seqs 16 \
   --max-num-batched-tokens 8192 \
+  --override-generation-config '{"temperature":1.0,"top_k":20,"top_p":0.95}' \
   --language-model-only \
   --enable-chunked-prefill \
   --enable-prefix-caching \
@@ -56,11 +57,84 @@ vllm serve "$MERGED_MODEL" \
   --tool-call-parser qwen3_xml
 ```
 
-Configure a ThinkingBox evaluation YAML whose agent endpoint is
-`http://127.0.0.1:8000/v1/chat/completions`, deployment is `q38-rlft`, and
-sampling is temperature 1.0, top-k 20, top-p 0.95. Configure the simulated
+Port 8001 leaves port 8000 available for OpenEnv. The serving override makes
+top-k 20 and top-p 0.95 explicit: the pinned ThinkingBox `AOAISessionConfig`
+does not expose those YAML fields, so adding them to the agent entry does
+not configure sampling.
+
+## Start the Qwen system-message compatibility proxy
+
+ThinkingBox can send consecutive leading system messages for agent and
+scenario instructions. Qwen's template accepts only one leading system
+message and otherwise raises `System message must be at the beginning.`
+The opt-in proxy merges that leading prefix with two newlines between each
+instruction, then forwards to vLLM. Other messages, tool calls, and request
+parameters are preserved.
+
+When first creating the environment, select the `eval-proxy` extra alongside
+the extras you need:
+
+```bash
+uv sync --frozen --extra eval-proxy
+```
+
+Do this before installing patched VeRL. Do not resync an environment that
+already contains the patched source installation.
+
+In a separate terminal, from the ThinkingBox Training root:
+
+```bash
+source .venv/bin/activate
+BACKEND=http://127.0.0.1:8001 \
+PYTHON="$PWD/.venv/bin/python" \
+  bash scripts/launch_sysmerge.sh
+```
+
+The launcher stays in the foreground. It defaults to loopback port 8014;
+`HOST`, `PORT`, `BACKEND`, and `PYTHON` can override the launch settings.
+Keep it running while evaluating. Check backend readiness before starting:
+
+```bash
+curl --fail http://127.0.0.1:8014/readyz
+```
+
+`/healthz` checks only the proxy; `/readyz` checks vLLM's `/v1/models`.
+The proxy preserves upstream error responses and does not retry requests.
+Connection failures return HTTP 502 and timeouts return HTTP 504.
+JSON and streaming chat responses are supported, including cleanup on
+completion or disconnect. An upstream failure after streaming begins
+terminates the stream rather than fabricating a completion.
+
+System messages after a non-system turn are rejected with HTTP 400 rather
+than reordered. System content must be text or text-part arrays; unsupported
+content is rejected rather than silently dropped. Leading system messages
+with extra message-level fields are also rejected when a merge would discard
+those fields. Zero or one leading system message is otherwise unchanged.
+The proxy is for a trusted local vLLM endpoint, not a public authenticated
+gateway. It does not log message bodies or credentials.
+
+Update only the agent entry in your existing ThinkingBox evaluation YAML:
+
+```yaml
+orchestrator:
+  agent_model:
+    type: aoai
+    endpoint_url: http://127.0.0.1:8014/v1/chat/completions
+    deployment: q38-rlft
+    credential:
+      type: api-key
+      api_key: Fake
+    is_reasoning: true
+    temperature: 1.0
+    max_completion_tokens: 8192
+    timeout: 1800
+```
+
+Retain the MCP, simulated-user, and judge entries. Configure the simulated
 user and judge through supported public providers as described in the
 [ThinkingBox LLM endpoint guide](https://github.com/microsoft/thinkingbox/blob/main/docs/llm_endpoint_config.md).
+The proxy is specific to the Qwen endpoint; do not route the other model
+roles through it.
 
 ## Run ThinkingBox-Bench 507 × 20
 

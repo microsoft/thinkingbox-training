@@ -45,6 +45,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+eval-proxy = [
+    "anyio>=4.14.2,<5",
+    "fastapi>=0.136.3,<0.137",
+    "httpx>=0.28.1,<0.29",
+    "starlette>=1.6,<2",
+    "uvicorn>=0.52.4,<0.55",
+]
 # Install separately after the base env is built; these wheels are picky.
 fast = [
     "flash-attn==2.8.3.post1",
